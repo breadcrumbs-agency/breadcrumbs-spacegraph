@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "breadcrumbs-spacegraph"
+version = "0.4.1"
+description = "The viewers of breadcrumbs: the explorer page, and the terminal viewers for Kitty and Ghostty."
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = ["breadcrumbs-common>=0.4.1,<0.5"]
+
+[tool.setuptools]
+packages = ["breadcrumbs_spacegraph"]
+
+[tool.setuptools.package-data]
+breadcrumbs_spacegraph = ["view.html"]
