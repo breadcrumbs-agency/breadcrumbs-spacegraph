@@ -37,6 +37,7 @@ import webbrowser
 from breadcrumbs import ports
 
 from . import term, view
+from .harness import fragment, hint
 
 PORT = 8765  # the port of `serve`
 GRACE = 0.7  # seconds that a Linux app has to die before the command says that it started
@@ -56,9 +57,12 @@ def is_mac():
     return sys.platform == "darwin"
 
 
-def term_argv(home):
-    """`term` on home, found by Python wherever the window starts (a new window has another working folder)."""
-    return ["env", "PYTHONPATH=" + ports.pythonpath(os.environ.get("PYTHONPATH")), sys.executable, "-m", "breadcrumbs", "--home", home, "term"]
+def term_argv(home, harness=None):
+    """`term` on home, found by Python wherever the window starts (a new window has another working folder).
+    harness: the program that opens it; the new process gets it as BREADCRUMBS_HARNESS (the icon beside the brand)."""
+    named = hint(harness)
+    return ["env", "PYTHONPATH=" + ports.pythonpath(os.environ.get("PYTHONPATH"))] + (["BREADCRUMBS_HARNESS=" + named] if named else []) \
+        + [sys.executable, "-m", "breadcrumbs", "--home", home, "term"]
 
 
 def window_argv(app, home):
@@ -134,7 +138,7 @@ def explorer_url(home, port=PORT, harness=None):
     """The URL of the explorer of this home: the port "explorer" that viz asks for. A server that takes this home's
     token is used again (answers). Else a detached `serve` starts: on the port, or on a free port when another program
     holds it. The child gets this process's module path, so it has the same packages. harness: the harness that asks
-    (the page does not draw it yet). A memory with no index.db holds no session yet: the server cannot read it, so
+    (the address carries it, `&h=`, so that the page draws its icon beside the brand: harness.py). A memory with no index.db holds no session yet: the server cannot read it, so
     this raises LookupError (no server starts)."""
     if not os.path.isfile(os.path.join(home, "index.db")):
         raise LookupError("this memory holds no sessions yet (sync first: `sync claude-code`)")
@@ -150,7 +154,7 @@ def explorer_url(home, port=PORT, harness=None):
             if listening(port):
                 break
             time.sleep(0.1)
-    return "http://127.0.0.1:%d/#k=%s" % (port, view.token(home))
+    return "http://127.0.0.1:%d/#k=%s%s" % (port, view.token(home), fragment(harness))
 
 
 def answers(port, home):
@@ -192,7 +196,7 @@ def open_web(home, port, show, out, err):
         return 1
     url = "http://127.0.0.1:%d/" % (server.server_address[1] if server else wanted)
     try:
-        if not webbrowser.open(url + "#k=" + key):
+        if not webbrowser.open(url + "#k=" + key + fragment()):
             print("breadcrumbs: no web browser started. `serve` prints an address that has the token.", file=err)
             return 1
         print("breadcrumbs explorer (read-only): %s  %s" % (url, "(Ctrl-C stops the server)" if server

@@ -70,10 +70,10 @@ def _term_port(url):
     return term.run(url) if kitty.supported() else None
 
 
-def _term_argv(home):
+def _term_argv(home, harness=None):
     """The port "term_argv" of viz: the command line of `term` for this memory (a tmux pane runs it)."""
     from .launch import term_argv
-    return term_argv(home)
+    return term_argv(home, harness)
 
 
 def _add_term(sub):
