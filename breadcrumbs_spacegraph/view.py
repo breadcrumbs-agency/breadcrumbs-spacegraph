@@ -29,8 +29,8 @@ from breadcrumbs.ingest import leaves
 from breadcrumbs.lines import decode_spine
 from breadcrumbs.metrics import metric
 from breadcrumbs.reader import Reader, Trail  # Trail: tests/test_view.py and hermes.py read view.Trail
-from breadcrumbs.usage import AFTER, AFTER_KEYS, CACHE, KEYS as CACHE_KEYS, after as after_values, rates as cache_rates, \
-    values as cache_values
+from breadcrumbs.usage import AFTER, AFTER_KEYS, CACHE, KEYS as CACHE_KEYS, after as after_values, rank as act_rank, \
+    rates as cache_rates, values as cache_values
 from breadcrumbs.zoom import CUED, GAP, Zoom, parse_ref  # Zoom: tests/test_view.py reads view.Zoom
 
 PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "view.html")
@@ -378,18 +378,39 @@ def place(ts, starts, end):
 
 def request_slots(ace, usage):
     """The requests of one session on one axis. ace: its ace.log rows, usage: its usage.log rows of task main, both oldest
-    first. An ace.log line opens a request; the first usage.log line after it (before the next ace.log line) closes it.
-    A usage line that no ace line opened is a request of its own, and so is an ace line that no usage line followed.
-    -> [{"ace": row|None, "usage": row|None, "ts"}]"""
+    first. With the port ace_join (the harness that writes ace.log: its ONE join of a line with the request that it shaped),
+    each request is a slot with the lines that the join gives it. Of those lines, the one of the act of highest rank
+    (breadcrumbs/usage.py RANK; of equal acts the first) is the slot's line, and the others are its "more" lines. A
+    request that no line joins is a slot, and so is a line that joins no request. A slot's time is its first line, else
+    its request's stamp; the slots go in that order, and in one second a slot whose request ended sooner goes first and
+    a line that joins nothing goes last.
+    With no port: an ace.log line opens a request; the first usage.log line after it (before the next ace.log line)
+    closes it. A usage line that no ace line opened is a request of its own, and so is an ace line that no usage line
+    followed.
+    -> [{"ace": row|None, "usage": row|None, "ts", "more": [rows]}]"""
+    join = ports.get("ace_join")
+    if join is not None:
+        lines, joined = {}, set()
+        for line, r in join(ace, usage):
+            lines.setdefault(id(r), []).append(line)
+            joined.add(id(line))
+        slots = []
+        for r in usage:
+            got = lines.get(id(r), [])
+            top = min(got, key=lambda line: act_rank(line["act"])) if got else None
+            slots.append({"ace": top, "usage": r, "ts": got[0]["ts"] if got else r["ts"],
+                          "more": [line for line in got if line is not top]})
+        slots += [{"ace": line, "usage": None, "ts": line["ts"], "more": []} for line in ace if id(line) not in joined]
+        return sorted(slots, key=lambda s: (s["ts"], s["usage"]["ts"] if s["usage"] else math.inf))
     slots, open_slot = [], None
     for ts, kind, row in sorted([(r["ts"], 0, r) for r in ace] + [(r["ts"], 1, r) for r in usage], key=lambda e: e[:2]):
         if kind == 0:
-            open_slot = {"ace": row, "usage": None, "ts": ts}
+            open_slot = {"ace": row, "usage": None, "ts": ts, "more": []}
             slots.append(open_slot)
         elif open_slot is not None and open_slot["usage"] is None:
             open_slot["usage"] = row
         else:
-            slots.append({"ace": None, "usage": row, "ts": ts})
+            slots.append({"ace": None, "usage": row, "ts": ts, "more": []})
             open_slot = None
     return slots
 
@@ -822,8 +843,8 @@ class _Measures:
             if len(self.slots) > COLS_MAX:
                 self.slots, self.capped["context"] = self.slots[-COLS_MAX:], True
             for i, sl in enumerate(self.slots):
-                if sl["ace"] is not None:
-                    self.slot_of[("ace", id(sl["ace"]))] = i
+                for line in ([sl["ace"]] if sl["ace"] is not None else []) + sl["more"]:  # every line of the slot is in it
+                    self.slot_of[("ace", id(line))] = i
                 if sl["usage"] is not None:
                     self.slot_of[("usage", id(sl["usage"]))] = i
                 self.ctx.append({"i": i, "kind": "request", "label": "request %d" % (i + 1), "t0": sl["ts"],
