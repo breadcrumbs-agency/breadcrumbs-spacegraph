@@ -27,9 +27,11 @@ def seed(root):
 
 
 class Adapter(unittest.TestCase):
-    def test_it_gives_the_five_viewer_commands_and_no_port(self):
-        self.assertEqual(sorted(c["name"] for c in ports.commands()), ["open", "serve", "spacegraph", "term", "viz"])
-        self.assertIsNone(ports.get("hide"))  # a harness gives the ports; this layer gives none
+    def test_it_gives_the_four_viewer_commands_and_the_ports_of_viz(self):
+        self.assertEqual(sorted(c["name"] for c in ports.commands()), ["open", "serve", "spacegraph", "term"])
+        self.assertIsNone(ports.get("hide"))  # a harness gives the ports; this layer gives no hide
+        for name in ("explorer", "term", "term_argv"):
+            self.assertIsNotNone(ports.get(name))  # viz (breadcrumbs/viz.py) asks for them
         self.assertEqual(ports.layer("spacegraph", __file__), False)  # it announced its layer once
 
     def test_the_commands_are_in_the_help_of_common(self):
