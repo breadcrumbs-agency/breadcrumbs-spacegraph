@@ -21,7 +21,7 @@ from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from breadcrumbs import metrics, ports
+from breadcrumbs import metrics, ports, statedb
 from breadcrumbs.crumbs import Crumb, is_crumb
 from breadcrumbs.history import _ref_name
 from breadcrumbs.index import cue_edges
@@ -621,7 +621,7 @@ class _Measures:
     # -- reading ---------------------------------------------------------------------------------------------
     def run(self):
         v = self.v
-        state = read_state(os.path.join(os.path.dirname(os.path.abspath(v.root)), "state.db"), v.db_connect)
+        state = read_state(statedb.locate(v.root), v.db_connect)
         self.db, models = state if state else (None, None)
         self.cost_by = {}
         for r in models or ():
@@ -1661,7 +1661,7 @@ class View(Reader):
                   name a chat that the map does not show.
           how     sessions.created_source (cli, subagent, ...), or None.
         has_db says whether the profile has a state.db with sessions. Reads CAL_COLS of state.db and a few crumbs. Writes nothing."""
-        db = read_times(os.path.join(os.path.dirname(os.path.abspath(self.root)), "state.db"), self.db_connect)
+        db = read_times(statedb.locate(self.root), self.db_connect)
         limit = max(1, min(CAL_MAX, int(limit)))
         with self.lock:
             names = [n for n in self.refs.names() if n.startswith("sess-")]
