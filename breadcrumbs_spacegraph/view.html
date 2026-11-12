@@ -2183,8 +2183,15 @@ function meaFmt(v, unit, exact) {  // a number for a cell (short) or for the sid
     return exact ? "$" + +v.toFixed(9) : a >= 1000 ? "$" + (v / 1000).toFixed(1) + "k" : a >= 100 ? "$" + v.toFixed(0) : a >= 10 ? "$" + v.toFixed(1) : a >= 0.1 ? "$" + v.toFixed(2) : a === 0 ? "$0" : a >= 0.01 ? "$" + v.toFixed(3) : "$" + v.toFixed(4);
   }
   if (unit === "bytes") return exact ? v.toLocaleString() + " B" : v >= 1048576 ? (v / 1048576).toFixed(1) + " MB" : v >= 1024 ? (v / 1024).toFixed(v >= 10240 ? 0 : 1) + " kB" : v + " B";
+  if (unit === "share") return exact ? +(v * 100).toFixed(4) + " %" : (v * 100).toFixed(1) + "%";  // a ratio of a part to its whole
+  if (unit === "ratio") return exact ? +v.toFixed(4) + "x" : v.toFixed(v >= 10 ? 0 : 1) + "x";
   return exact ? v.toLocaleString() : kfmt(v);
 }
+// A measure of agg ratio folds its parts, never its shares: a fact of a ratio carries the parts [numerator, denominator] of
+// self (f[9]) and of incl (f[10]), a total its parts (t[5]); a cell, a row total and a column total add the parts, then divide.
+// A denominator of 0 is no number.
+const meaAddP = (a, b) => !b ? a : !a ? [b[0], b[1]] : [a[0] + b[0], a[1] + b[1]];
+const meaShare = p => p && p[1] ? p[0] / p[1] : null;
 const meaUnitOf = () => { const m = meaM(); return m ? m.unit : "count"; };
 function meaModelColor(m) {
   if (!m || m === "-") return "#6c7086";
@@ -2373,12 +2380,13 @@ function meaCell(key) {
   let m = MEA.cache.get(key);
   if (m) return m;
   m = new Map();
-  const max = MEA.agg === "max";
+  const max = MEA.agg === "max", ratio = MEA.agg === "ratio";
   for (const f of MEA.facts.get(key) || []) {
     const col = meaCol(f[1]);
     let c = m.get(col);
-    if (!c) m.set(col, c = {self: null, incl: null, parts: []});
+    if (!c) m.set(col, c = {self: null, incl: null, parts: [], sp: null, ip: null});
     c.parts.push(f);
+    if (ratio) { c.sp = meaAddP(c.sp, f[9]); c.ip = meaAddP(c.ip, f[10]); c.self = meaShare(c.sp); c.incl = meaShare(c.ip); continue; }
     if (f[4] != null) c.self = c.self == null ? f[4] : max ? Math.max(c.self, f[4]) : c.self + f[4];
     if (f[5] != null) c.incl = c.incl == null ? f[5] : max ? Math.max(c.incl, f[5]) : c.incl + f[5];
   }
@@ -2391,6 +2399,13 @@ function meaRowTotal(key) {  // the right margin: the row's numbers added over t
   if (t) return t;
   const max = MEA.agg === "max", by = new Map();
   let sum = null;
+  if (MEA.agg === "ratio") {  // the parts of every column, then one share; no stack by model (shares do not add up)
+    let p = null;
+    for (const c of meaCell(key).values()) p = meaAddP(p, MEA.incl ? c.ip : c.sp);
+    t = {sum: meaShare(p), by};
+    MEA.rowTot.set(key, t);
+    return t;
+  }
   for (const c of meaCell(key).values()) {
     const v = meaVal(c);
     if (v == null) continue;
@@ -2417,10 +2432,11 @@ function meaPrepare() {  // the rows in view (the open ones), the colour scale, 
   }
   MEA.vmax = vmax; MEA.vmin = vmin === Infinity ? 0 : vmin; MEA.rowMax = rmax;
   const tot = new Map(), max = MEA.agg === "max";  // the bottom margin: the whole scope, the same in SELF and in INCLUSIVE
-  for (const [, ctx, v, model] of MEA.totals || []) {
+  for (const [, ctx, v, model, , parts] of MEA.totals || []) {
     const col = meaCol(ctx);
     let t = tot.get(col);
-    if (!t) tot.set(col, t = {sum: 0, by: new Map()});
+    if (!t) tot.set(col, t = {sum: 0, by: new Map(), p: null});
+    if (MEA.agg === "ratio") { t.p = meaAddP(t.p, parts); t.sum = meaShare(t.p) || 0; continue; }
     t.sum = max ? Math.max(t.sum, v) : t.sum + v;
     t.by.set(model || "", max ? Math.max(t.by.get(model || "") || 0, v) : (t.by.get(model || "") || 0) + v);
   }
@@ -2700,7 +2716,8 @@ function meaFoot(g, G, R) {  // the total of each column: the whole scope, so it
     if (wd >= 34) { const txt = meaFmt(t.sum, unit); if (meaFits(G, x, wd, txt.length * 6.4)) { g.fillStyle = MC.fg; g.fillText(txt, x + wd / 2, G.footTop + 36); } }
   }
   g.restore();
-  const all = [...MEA.colTot.values()].reduce((a, t) => MEA.agg === "max" ? Math.max(a, t.sum) : a + t.sum, 0);
+  const all = MEA.agg === "ratio" ? meaShare([...MEA.colTot.values()].reduce((a, t) => meaAddP(a, t.p), null))
+    : [...MEA.colTot.values()].reduce((a, t) => MEA.agg === "max" ? Math.max(a, t.sum) : a + t.sum, 0);
   g.save(); g.textAlign = "right"; g.fillStyle = MC.fg; g.font = "600 12px " + SANS;
   g.fillText(meaFmt(all, unit), G.w - 8, G.footTop + 33); g.fillStyle = MC.dim; g.font = "10px " + SANS; g.fillText(MEA.agg === "max" ? "LARGEST" : "ALL COLUMNS", G.w - 8, G.footTop + 14);
   g.restore();

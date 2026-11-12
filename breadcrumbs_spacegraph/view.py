@@ -21,13 +21,15 @@ from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from breadcrumbs import ports
+from breadcrumbs import metrics, ports
 from breadcrumbs.crumbs import Crumb, is_crumb
 from breadcrumbs.history import _ref_name
 from breadcrumbs.index import cue_edges
 from breadcrumbs.ingest import leaves
 from breadcrumbs.lines import decode_spine
+from breadcrumbs.metrics import metric
 from breadcrumbs.reader import Reader, Trail  # Trail: tests/test_view.py and hermes.py read view.Trail
+from breadcrumbs.usage import CACHE, KEYS as CACHE_KEYS, rates as cache_rates, values as cache_values
 from breadcrumbs.zoom import CUED, GAP, Zoom, parse_ref  # Zoom: tests/test_view.py reads view.Zoom
 
 PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "view.html")
@@ -184,43 +186,48 @@ CAL_COLS = ("id", "parent_session_id", "created_source", "started_at", "ended_at
 CAL_MAX = 1000  # sessions in one answer of calendar()
 
 
-def _measure(key, label, unit, group, src, units, agg="sum", keyed=False, walks=False):
-    return {"key": key, "label": label, "unit": unit, "agg": agg, "group": group, "src": src, "units": list(units),
-            "keyed": keyed, "walks": walks}
-
-
 # group: where the number is recorded. units: the context units in which it has a position (a number with no position
 # in a unit has no cell there: "no data", never a guess). walks: the number is read from the crumb tree of every chat (the
 # store), which costs a read of every crumb and every spine of the store (5 s for a store of 23 MB with Hermes's Python); the others
 # come from state.db, the logs and the receipts, and cost a read of a few files. measures() with no m leaves out the measures that
-# walk; m="all" or their names asks for them.
-MEASURES = [
-    _measure("in_tok", "input tokens", "tokens", "db", "state.db sessions.input_tokens", ("time",)),
-    _measure("out_tok", "output tokens", "tokens", "db", "state.db sessions.output_tokens", ("time",)),
-    _measure("cache_read", "cache read tokens", "tokens", "db", "state.db sessions.cache_read_tokens", ("time",)),
-    _measure("cache_write", "cache write tokens", "tokens", "db", "state.db sessions.cache_write_tokens", ("time",)),
-    _measure("reason_tok", "reasoning tokens", "tokens", "db", "state.db sessions.reasoning_tokens", ("time",)),
-    _measure("api_calls", "api calls", "count", "db", "state.db sessions.api_call_count", ("time",)),
-    _measure("tool_calls", "tool calls", "count", "db", "state.db sessions.tool_call_count", ("time",)),
-    _measure("messages", "messages", "count", "db", "state.db sessions.message_count", ("time",)),
-    _measure("cost_usd", "cost", "usd", "cost", "state.db session_model_usage", ("time",), keyed=True),
-    _measure("u_prompt", "prompt tokens", "tokens", "usage", "usage.log prompt=", ("time", "request"), keyed=True),
-    _measure("u_in", "input tokens (request)", "tokens", "usage", "usage.log in=", ("time", "request"), keyed=True),
-    _measure("u_cr", "cache read tokens (request)", "tokens", "usage", "usage.log cr=", ("time", "request"), keyed=True),
-    _measure("u_cw", "cache write tokens (request)", "tokens", "usage", "usage.log cw=", ("time", "request"), keyed=True),
-    _measure("u_out", "output tokens (request)", "tokens", "usage", "usage.log out=", ("time", "request"), keyed=True),
-    _measure("u_rsn", "reasoning tokens (request)", "tokens", "usage", "usage.log rsn=", ("time", "request"), keyed=True),
-    _measure("ace_raw", "raw (before ACE)", "tokens", "ace", "ace.log in=", ("time", "request")),
-    _measure("ace_sent", "sent (after ACE)", "tokens", "ace", "ace.log out=", ("time", "request")),
-    _measure("ace_base", "base (prompt, tools)", "tokens", "ace", "ace.log base=", ("time", "request")),
-    _measure("ace_lay", "layer (crumbs)", "tokens", "ace", "ace.log lay=", ("time", "request")),
-    _measure("ace_exact", "exact turns", "tokens", "ace", "ace.log out - base - lay", ("time", "request")),
-    _measure("ace_held", "held back", "tokens", "ace", "ace.log in - out", ("time", "request")),
-    _measure("ace_folds", "folds", "count", "ace", "ace.log act=fold", ("time", "request")),
-    _measure("ace_target", "target", "tokens", "ace", "ace.log target=", ("time", "request"), agg="max"),
-    _measure("ctx_bytes", "bytes put in the context", "bytes", "rcpt", "receipts (rcpt crumbs)", ("time", "turn", "event")),
-    _measure("size", "crumb size", "bytes", "store", "the store: bytes of the level-1 text", ("time", "turn"), walks=True),
-]
+# walk; m="all" or their names asks for them. The entry type and the table are common's (breadcrumbs/metrics.py): the viewer
+# adds its own measures there, then shows them and the cache metrics of common (breadcrumbs/usage.py), which it reads from the
+# same usage.log lines.
+MEASURES = metrics.add(
+    metric("in_tok", "input tokens", "tokens", group="db", src="state.db sessions.input_tokens", units=("time",)),
+    metric("out_tok", "output tokens", "tokens", group="db", src="state.db sessions.output_tokens", units=("time",)),
+    metric("cache_read", "cache read tokens", "tokens", group="db", src="state.db sessions.cache_read_tokens", units=("time",)),
+    metric("cache_write", "cache write tokens", "tokens", group="db", src="state.db sessions.cache_write_tokens", units=("time",)),
+    metric("reason_tok", "reasoning tokens", "tokens", group="db", src="state.db sessions.reasoning_tokens", units=("time",)),
+    metric("api_calls", "api calls", "count", group="db", src="state.db sessions.api_call_count", units=("time",)),
+    metric("tool_calls", "tool calls", "count", group="db", src="state.db sessions.tool_call_count", units=("time",)),
+    metric("messages", "messages", "count", group="db", src="state.db sessions.message_count", units=("time",)),
+    metric("cost_usd", "cost", "usd", group="cost", src="state.db session_model_usage", units=("time",), keyed=True),
+    metric("u_prompt", "prompt tokens", "tokens", group="usage", src="usage.log prompt=", units=("time", "request"),
+           keyed=True),
+    metric("u_in", "input tokens (request)", "tokens", group="usage", src="usage.log in=", units=("time", "request"),
+           keyed=True),
+    metric("u_cr", "cache read tokens (request)", "tokens", group="usage", src="usage.log cr=", units=("time", "request"),
+           keyed=True),
+    metric("u_cw", "cache write tokens (request)", "tokens", group="usage", src="usage.log cw=", units=("time", "request"),
+           keyed=True),
+    metric("u_out", "output tokens (request)", "tokens", group="usage", src="usage.log out=", units=("time", "request"),
+           keyed=True),
+    metric("u_rsn", "reasoning tokens (request)", "tokens", group="usage", src="usage.log rsn=", units=("time", "request"),
+           keyed=True),
+    metric("ace_raw", "raw (before ACE)", "tokens", group="ace", src="ace.log in=", units=("time", "request")),
+    metric("ace_sent", "sent (after ACE)", "tokens", group="ace", src="ace.log out=", units=("time", "request")),
+    metric("ace_base", "base (prompt, tools)", "tokens", group="ace", src="ace.log base=", units=("time", "request")),
+    metric("ace_lay", "layer (crumbs)", "tokens", group="ace", src="ace.log lay=", units=("time", "request")),
+    metric("ace_exact", "exact turns", "tokens", group="ace", src="ace.log out - base - lay", units=("time", "request")),
+    metric("ace_held", "held back", "tokens", group="ace", src="ace.log in - out", units=("time", "request")),
+    metric("ace_folds", "folds", "count", group="ace", src="ace.log act=fold", units=("time", "request")),
+    metric("ace_target", "target", "tokens", "max", group="ace", src="ace.log target=", units=("time", "request")),
+    metric("ctx_bytes", "bytes put in the context", "bytes", group="rcpt", src="receipts (rcpt crumbs)",
+           units=("time", "turn", "event")),
+    metric("size", "crumb size", "bytes", group="store", src="the store: bytes of the level-1 text", units=("time", "turn"),
+           walks=True),
+) + CACHE
 MEASURE = {m["key"]: m for m in MEASURES}
 DB_COLUMN = {"in_tok": "input_tokens", "out_tok": "output_tokens", "cache_read": "cache_read_tokens",
              "cache_write": "cache_write_tokens", "reason_tok": "reasoning_tokens", "api_calls": "api_call_count",
@@ -386,35 +393,14 @@ def request_slots(ace, usage):
     return slots
 
 
-class _Cell:
-    """One number of an answer and where it came from: value, how many records it sums, their first and last time."""
-    __slots__ = ("v", "n", "t0", "t1", "src")
-
-    def __init__(self, v, ts, src):
-        self.v, self.n, self.t0, self.t1, self.src = v, 1, ts, ts, src
-
-    def add(self, v, ts, agg):
-        self.v = max(self.v, v) if agg == "max" else self.v + v
-        self.n += 1
-        if ts is not None:
-            self.t0 = ts if self.t0 is None else min(self.t0, ts)
-            self.t1 = ts if self.t1 is None else max(self.t1, ts)
-
-
-def _put(acc, key, v, ts, src, agg="sum"):
-    """acc[key] takes v (key = (context, measure, model, task)). A measure of agg max keeps the largest."""
-    cell = acc.get(key)
-    if cell is None:
-        acc[key] = _Cell(v, ts, src)
-    else:
-        cell.add(v, ts, agg)
+# The cells and the fold are common's (breadcrumbs/metrics.py). A key is (context, measure, model, task); a cell of a ratio
+# holds the pair (numerator, denominator) of its records, and its number is made at the end (_Measures.num).
+_Cell, _put = metrics.Cell, metrics.put
 
 
 def _roll(into, other, agg_of):
-    """into[key] takes the plain numbers of other ({key: number}): the sum, or the largest for a measure of agg max."""
-    for key, v in other.items():
-        have = into.get(key)
-        into[key] = v if have is None else max(have, v) if agg_of[key[1]] == "max" else have + v
+    """into[key] takes the folded values of other ({key: value}), by the agg of each key's measure (agg_of: {measure: agg})."""
+    metrics.roll(into, other, lambda key: agg_of[key[1]])
 
 
 _NUL = re.compile(b"\x00")  # a NUL byte: _Sizer.nul_at looks for it in each block of the store
@@ -913,6 +899,20 @@ class _Measures:
                 _put(acc, (c, m, r["model"] or "-", r["task"]), r[f], r["ts"], ("usage", sid))
         return acc
 
+    def facts_cache(self, sid):
+        """The cache metrics of common (breadcrumbs/usage.py) from the same usage.log lines: each line gives its value (a ratio
+        its pair), folded in the cell of its model and task. A break is found over all the lines of the session."""
+        acc, rows = {}, self.use_by.get(sid, ())
+        wanted = [m for m in CACHE_KEYS if m in self.want]
+        if not wanted or not rows or self.unit not in ("time", "request"):
+            return acc
+        for r, vals in zip(rows, cache_values(rows, cache_rates if "cache_saved_usd" in wanted else None)):
+            c = self.ctx_log(r, "usage")
+            for m in wanted if c is not None else ():
+                if m in vals:
+                    _put(acc, (c, m, r["model"] or "-", r["task"]), vals[m], r["ts"], ("usage", sid), self.agg[m])
+        return acc
+
     def facts_ace(self, sid):
         acc, prefix = {}, sid[:ACE_PREFIX]
         if not any(MEASURE[m]["group"] == "ace" for m in self.want) or self.unit not in ("time", "request"):
@@ -967,7 +967,8 @@ class _Measures:
         includes: its crumbs, and the sessions under it in the lineage (each rolled up the same way)."""
         self.own, self.incl, tree = {}, {}, {}
         for sid in self.order:
-            flat = {**self.facts_db(sid), **self.facts_cost(sid), **self.facts_usage(sid), **self.facts_ace(sid)}
+            flat = {**self.facts_db(sid), **self.facts_cost(sid), **self.facts_usage(sid), **self.facts_cache(sid),
+                    **self.facts_ace(sid)}
             own_tree, nums = self.facts_tree(sid)
             self.own[sid] = {**flat, **own_tree}
             tree[sid] = _nums(flat)
@@ -1021,6 +1022,8 @@ class _Measures:
 
     # -- rows and facts --------------------------------------------------------------------------------------
     def num(self, v, measure):
+        """The number of a folded value: a ratio's share of its sums (None when the denominator is 0), a usd rounded."""
+        v = metrics.value(self.agg[measure], v)
         return None if v is None else round(v, 9) if MEASURE[measure]["unit"] == "usd" else v
 
     def source(self, cell, measure):
@@ -1036,8 +1039,13 @@ class _Measures:
         for k in sorted(set(own) | set(incl), key=lambda k: (k[0], k[1], k[2] or "", k[3] or "")):
             cell = own.get(k)
             v = cell.v if cell else None
-            out.append([key, k[0], scope, k[1], self.num(v, k[1]), self.num(incl.get(k, v), k[1]),
-                        self.source(cell, k[1]) if cell else None, k[2], k[3]])
+            fact = [key, k[0], scope, k[1], self.num(v, k[1]), self.num(incl.get(k, v), k[1]),
+                    self.source(cell, k[1]) if cell else None, k[2], k[3]]
+            if self.agg[k[1]] == "ratio":  # a ratio carries its parts, so that a page can fold cells as a ratio of sums
+                if fact[4] is None and fact[5] is None:
+                    continue  # a 0 denominator: no cell
+                fact += [list(v) if v else None, list(incl.get(k, v))]
+            out.append(fact)
             if k[2]:
                 self.models.add(k[2])
         return out
@@ -1202,8 +1210,9 @@ class _Measures:
             total = {}
             for r in self.top:  # the lineage roots hold everything below them: this is the grand total, in either mode
                 _roll(total, self.incl[r], self.agg)
-            totals = [[k[1], k[0], self.num(v, k[1]), k[2], k[3]]
-                      for k, v in sorted(total.items(), key=lambda kv: (kv[0][1], kv[0][0], kv[0][2] or "", kv[0][3] or ""))]
+            totals = [[k[1], k[0], self.num(v, k[1]), k[2], k[3]] + ([list(v)] if self.agg[k[1]] == "ratio" else [])
+                      for k, v in sorted(total.items(), key=lambda kv: (kv[0][1], kv[0][0], kv[0][2] or "", kv[0][3] or ""))
+                      if self.num(v, k[1]) is not None or self.agg[k[1]] != "ratio"]
         lines = self.build_lines() if self.want_lines and self.focus else None
         has = {"db": self.db is not None, "cost": self.db is not None, "usage": bool(self.use_by), "ace": bool(self.ace_by),
                "rcpt": any(self.events_of(s["sid"]) for s in self.S.values() if s["ref"]),
@@ -1541,12 +1550,16 @@ class View(Reader):
                 the bottom: its descendants in the lineage and in the crumb tree). incl = self + the incl of each member,
                 exactly (max in place of + for a measure of agg max), and the grand total, totals, is the incl of the
                 roots, which is also the sum of all self numbers. A heritage edge (a sum's sources) is a link, not a count.
+                A measure of agg ratio (dims.measure[].of names its parts) folds its parts, never its shares: its number is
+                sum(numerators) / sum(denominators) in a cell, in incl and in totals; a 0 denominator gives no number.
 
         facts: [[row key, context, scope key, measure, self|None, incl, source, model|None, task|None]]. Cost and the
         usage.log measures are also keyed by model and task, which are never part of the row's label. source says where
         the number was read, so a click can show it: ["db", "sessions.<column>", sid]; ["db", "session_model_usage", sid,
         model, task, "<cost column>", cost_status, cost_source]; ["usage", sid, n, first, last] and ["ace", log prefix, n,
         first, last] (n lines, their first and last time); ["rcpt", [receipt crumb ids], n]; ["store", crumb id, "size"].
+        A fact of a ratio has two more items, the parts [numerator, denominator] of self (or None) and of incl; a total of a
+        ratio has one more, its parts. A ratio with no number in self or in incl has no fact, and no total.
 
         m: the measures to compute, "a,b" (default: every measure that does not walk; "all": every measure; "none": no
         facts). A measure walks when it is read from the crumb tree of every chat (dims.measure[].walks): that is the size.
