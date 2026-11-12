@@ -29,7 +29,8 @@ from breadcrumbs.ingest import leaves
 from breadcrumbs.lines import decode_spine
 from breadcrumbs.metrics import metric
 from breadcrumbs.reader import Reader, Trail  # Trail: tests/test_view.py and hermes.py read view.Trail
-from breadcrumbs.usage import CACHE, KEYS as CACHE_KEYS, rates as cache_rates, values as cache_values
+from breadcrumbs.usage import AFTER, AFTER_KEYS, CACHE, KEYS as CACHE_KEYS, after as after_values, rates as cache_rates, \
+    values as cache_values
 from breadcrumbs.zoom import CUED, GAP, Zoom, parse_ref  # Zoom: tests/test_view.py reads view.Zoom
 
 PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "view.html")
@@ -192,7 +193,7 @@ CAL_MAX = 1000  # sessions in one answer of calendar()
 # come from state.db, the logs and the receipts, and cost a read of a few files. measures() with no m leaves out the measures that
 # walk; m="all" or their names asks for them. The entry type and the table are common's (breadcrumbs/metrics.py): the viewer
 # adds its own measures there, then shows them and the cache metrics of common (breadcrumbs/usage.py), which it reads from the
-# same usage.log lines.
+# same usage.log lines, and the cache writes beside the ACE acts (usage.py AFTER: ace.log lines joined to those lines).
 MEASURES = metrics.add(
     metric("in_tok", "input tokens", "tokens", group="db", src="state.db sessions.input_tokens", units=("time",)),
     metric("out_tok", "output tokens", "tokens", group="db", src="state.db sessions.output_tokens", units=("time",)),
@@ -227,7 +228,7 @@ MEASURES = metrics.add(
            units=("time", "turn", "event")),
     metric("size", "crumb size", "bytes", group="store", src="the store: bytes of the level-1 text", units=("time", "turn"),
            walks=True),
-) + CACHE
+) + CACHE + AFTER
 MEASURE = {m["key"]: m for m in MEASURES}
 DB_COLUMN = {"in_tok": "input_tokens", "out_tok": "output_tokens", "cache_read": "cache_read_tokens",
              "cache_write": "cache_write_tokens", "reason_tok": "reasoning_tokens", "api_calls": "api_call_count",
@@ -907,10 +908,30 @@ class _Measures:
         if not wanted or not rows or self.unit not in ("time", "request"):
             return acc
         for r, vals in zip(rows, cache_values(rows, cache_rates if "cache_saved_usd" in wanted else None)):
-            c = self.ctx_log(r, "usage")
-            for m in wanted if c is not None else ():
-                if m in vals:
-                    _put(acc, (c, m, r["model"] or "-", r["task"]), vals[m], r["ts"], ("usage", sid), self.agg[m])
+            self.put_request(acc, sid, r, vals, wanted)
+        return acc
+
+    def put_request(self, acc, sid, r, vals, wanted):
+        """The values (vals: {metric: value}, a ratio its pair) that one usage.log line gives, in the cell of that line,
+        of its model and task: the metrics of wanted that vals has."""
+        c = self.ctx_log(r, "usage")
+        for m in wanted if c is not None else ():
+            if m in vals:
+                _put(acc, (c, m, r["model"] or "-", r["task"]), vals[m], r["ts"], ("usage", sid), self.agg[m])
+
+    def facts_after(self, sid):
+        """The cache writes beside the ACE acts (breadcrumbs/usage.py AFTER): each ace.log line of the session joined to the
+        main request that it shaped (the port ace_join of the harness that writes ace.log), in the cell of that request.
+        No port, or a line with no request: no cell."""
+        acc, rows = {}, self.use_by.get(sid, ())
+        wanted = [m for m in AFTER_KEYS if m in self.want]
+        join = ports.get("ace_join") if wanted and rows and self.unit in ("time", "request") else None
+        if join is None:
+            return acc
+        at = {id(r): i for i, r in enumerate(rows)}
+        joins = [(line["act"], at[id(r)]) for line, r in join(self.ace_by.get(sid[:ACE_PREFIX], ()), rows)]
+        for i, vals in after_values(rows, joins).items():
+            self.put_request(acc, sid, rows[i], vals, wanted)
         return acc
 
     def facts_ace(self, sid):
@@ -968,7 +989,7 @@ class _Measures:
         self.own, self.incl, tree = {}, {}, {}
         for sid in self.order:
             flat = {**self.facts_db(sid), **self.facts_cost(sid), **self.facts_usage(sid), **self.facts_cache(sid),
-                    **self.facts_ace(sid)}
+                    **self.facts_after(sid), **self.facts_ace(sid)}
             own_tree, nums = self.facts_tree(sid)
             self.own[sid] = {**flat, **own_tree}
             tree[sid] = _nums(flat)
