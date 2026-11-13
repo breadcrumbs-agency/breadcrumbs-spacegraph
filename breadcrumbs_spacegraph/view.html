@@ -3373,6 +3373,8 @@ function meaFooter() {
   f.append(el("span", "lg", "Wheel or drag to move, pinch or Ctrl+wheel to zoom the columns, + − 0 from the keyboard."));
 }
 
+// the poll interval in milliseconds: the dial update_ms (view.py fills it in; opened as a file, it is the default 2000)
+const UPDATE_MS = Number("__UPDATE_MS__") || 2000;
 // -- on and off, the frame, the poll ------------------------------------------------------------------------------------------------
 let meaLast = 0;
 function meaFrame(t) {
@@ -3407,7 +3409,7 @@ new MutationObserver(meaSideSync).observe($("side"), {attributes: true, attribut
 new ResizeObserver(() => { MEA.dirty = true; if (MEA.on) meaClamp(false); }).observe($("mew"));
 $("meaon").addEventListener("change", () => meaSet($("meaon").checked));
 for (const id of ["ctxon", "trkon"]) $(id).addEventListener("change", () => { if ($(id).checked && MEA.on) meaSet(false); });
-setInterval(() => { if (MEA.on && !document.hidden && !MDRAG && !MEA.busy && !MEA.loading) meaLoad(true); }, 6000);  // a chat that is running adds lines; not while an answer is on its way
+setInterval(() => { if (MEA.on && !document.hidden && !MDRAG && !MEA.busy && !MEA.loading) meaLoad(true); }, 3 * UPDATE_MS);  // a chat that is running adds lines; not while an answer is on its way
 (function meaInit() {
   const h = k => HASH.get(k);
   if (h("mmeasure")) MEA.measure = h("mmeasure");
@@ -3479,7 +3481,7 @@ function meaDrawUsage(sid, d) {
   box.textContent = ""; box.append(head, grid);
   [box.scrollLeft, box.scrollTop] = keep;
 }
-showTrail(); load(); follow(); setInterval(follow, 2000); setInterval(context, 2000); setInterval(trk, 2000); trk();
+showTrail(); load(); follow(); setInterval(follow, UPDATE_MS); setInterval(context, UPDATE_MS); setInterval(trk, UPDATE_MS); trk();
 const start = HASH.get("focus");
 if (start) setTimeout(() => revealId(start), 600);
 requestAnimationFrame(frame);

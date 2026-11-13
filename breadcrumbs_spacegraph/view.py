@@ -21,7 +21,7 @@ from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from breadcrumbs import metrics, ports, statedb
+from breadcrumbs import metrics, ports, statedb, tuning
 from breadcrumbs.crumbs import Crumb, is_crumb
 from breadcrumbs.history import _ref_name
 from breadcrumbs.index import cue_edges
@@ -36,6 +36,14 @@ from breadcrumbs.zoom import CUED, GAP, Zoom, parse_ref  # Zoom: tests/test_view
 from .harness import info as harness_info
 
 PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "view.html")
+
+
+def page(root=None):
+    """The explorer page as bytes, with its poll interval from the dial update_ms of the store at root (tuning.py)."""
+    with open(PAGE, encoding="utf-8") as f:
+        html = f.read()
+    ms = tuning.update_ms(root)
+    return html.replace("__UPDATE_MS__", str(ms)).encode("utf-8")
 HEAT_HALF = 86400.0  # seconds: the glow of a crumb the model opened halves each day
 ACE_LOG = ("ace.log.1", "ace.log")  # oldest first
 ACE_KV = re.compile(r"(\w+)=(\S+)")
@@ -1741,8 +1749,7 @@ def make_server(root, port=8765, host="127.0.0.1"):
             url = urlsplit(self.path)
             q = {k: v[0] for k, v in parse_qs(url.query).items()}
             if url.path in ("/", "/index.html"):
-                with open(PAGE, "rb") as f:
-                    return self._send(200, "text/html; charset=utf-8", f.read())
+                return self._send(200, "text/html; charset=utf-8", page(root))
             if url.path not in routes:
                 return self._send(404, "application/json", b'{"error": "not found"}')
             if not hmac.compare_digest(q.get("k", ""), key):
