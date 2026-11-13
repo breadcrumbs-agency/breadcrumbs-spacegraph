@@ -21,7 +21,7 @@ from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from breadcrumbs import metrics, ports, statedb, tuning
+from breadcrumbs import dials, metrics, ports, statedb
 from breadcrumbs.crumbs import Crumb, is_crumb
 from breadcrumbs.history import _ref_name
 from breadcrumbs.index import cue_edges
@@ -39,10 +39,10 @@ PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "view.html")
 
 
 def page(root=None):
-    """The explorer page as bytes, with its poll interval from the dial update_ms of the store at root (tuning.py)."""
+    """The explorer page as bytes, with its poll interval from the dial update_ms of the store at root (dials.top)."""
     with open(PAGE, encoding="utf-8") as f:
         html = f.read()
-    ms = tuning.update_ms(root)
+    ms = dials.top(root, "update_ms")
     return html.replace("__UPDATE_MS__", str(ms)).encode("utf-8")
 HEAT_HALF = 86400.0  # seconds: the glow of a crumb the model opened halves each day
 ACE_LOG = ("ace.log.1", "ace.log")  # oldest first
