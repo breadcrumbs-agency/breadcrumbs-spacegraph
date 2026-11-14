@@ -55,6 +55,7 @@ class Evidence(unittest.TestCase):
 
     def test_the_parts_are_codes_and_a_long_line_is_chained(self):
         r = self.view.evidence()
+        self.assertEqual(r["json"], self.view.where())
         self.assertTrue(r["parts"])
         for rows in r["parts"]:
             self.assertEqual(len(rows), len(rows[0]))
@@ -93,7 +94,8 @@ class Page(unittest.TestCase):
     def test_the_harness_box_opens_the_evidence_and_escape_closes_it(self):
         with open(os.path.join(HERE, "breadcrumbs_spacegraph", "view.html"), encoding="utf-8") as f:
             html = f.read()
-        for needle in ('id="evidence"', 'api("qr"', '$("harness").addEventListener("click", showEvidence)', "Escape", "drawCode"):
+        for needle in ('id="evidence"', 'className = "evidence-json"', 'api("qr"', '$("harness").addEventListener("click", showEvidence)',
+                       'id="settings-panel"', 'id="brandmark"', 'api("settings"', "Escape", "drawCode"):
             self.assertIn(needle, html)
         self.assertNotIn("KEY", html[html.index("function drawCode"):html.index("async function showEvidence")])  # the codes carry no token
 
