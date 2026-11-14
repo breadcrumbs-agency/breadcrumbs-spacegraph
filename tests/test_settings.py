@@ -28,7 +28,7 @@ class Settings(unittest.TestCase):
     def test_common_crud_and_harness_crud_are_separate(self):
         seen = []
 
-        def custom(action, payload):
+        def custom(root, action, payload):
             seen.append((action, payload.get("key")))
             return {"key": "fake", "label": "Fake", "fields": [], "enabled": False}
 
@@ -62,6 +62,26 @@ class Settings(unittest.TestCase):
         self.assertEqual(body["common"]["model"], "")
         with open(os.path.join(self.root, "config.json"), encoding="utf-8") as stream:
             self.assertEqual(json.load(stream)["update_ms"], 900)
+
+    def test_the_page_draws_bounded_dials_as_sliders_and_switches(self):
+        page = open(os.path.join(os.path.dirname(view.__file__), "view.html"), encoding="utf-8").read()
+        for needle in ('slider.type = "range"', 'classList.add("switch")', "control._wrap || control", "input.switch"):
+            self.assertIn(needle, page)
+
+    def test_the_harness_console_comes_before_the_common_dials(self):
+        page = open(os.path.join(os.path.dirname(view.__file__), "view.html"), encoding="utf-8").read()
+        self.assertLess(page.index('id="settings-harness"'), page.index('id="settings-common"'))
+
+    def test_grow_and_fold_dials_come_in_their_own_groups_in_order(self):
+        current = view.View(self.root)
+        self.addCleanup(current.close)
+        groups = {g["name"]: [r["key"] for r in g["rows"]] for g in current.settings("get", {})["common"]["groups"]}
+        names = list(groups)
+        self.assertEqual(names[:4], ["ACE thresholds (per model)", "ACE grow (per model)",
+                                     "ACE fold (per model)", "ACE gears (per model)"])
+        self.assertIn("ace_ratchet", groups["ACE grow (per model)"])
+        self.assertIn("ace_fold_to", groups["ACE fold (per model)"])
+        self.assertIn("ace_tokens", groups["ACE thresholds (per model)"])
 
 
 if __name__ == "__main__":

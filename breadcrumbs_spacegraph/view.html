@@ -53,10 +53,17 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 #settings-panel .settings-group h4{margin:0 0 4px;font-size:11px;color:var(--dim);letter-spacing:.07em;text-transform:uppercase}
 #settings-panel .settings-row{display:grid;grid-template-columns:minmax(150px,1fr) 180px minmax(110px,1.7fr) minmax(70px,auto) auto auto;align-items:center;gap:8px;padding:7px 0;border-top:1px solid rgba(255,255,255,.05)}
 #settings-panel .settings-row .name{font:12px var(--mono)}
+#settings-panel .dialbox{display:flex;align-items:center;gap:6px}
+#settings-panel .dialbox input[type=range]{flex:1;min-width:70px;height:20px;padding:0;accent-color:var(--accent)}
+#settings-panel .dialbox input[type=number]{width:64px}
+#settings-panel input.switch{appearance:none;-webkit-appearance:none;width:42px;height:24px;border-radius:12px;background:var(--line2);position:relative;cursor:pointer;border:0}
+#settings-panel input.switch::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:var(--fg);transition:left .12s}
+#settings-panel input.switch:checked{background:var(--accent)}
+#settings-panel input.switch:checked::after{left:21px}
 #settings-panel .settings-row .doc{color:var(--dim);font-size:11px;line-height:1.3}
 #settings-panel .settings-row .source{color:var(--faint);font-size:10px;white-space:nowrap}
 #settings-panel .settings-row .btn{height:25px;padding:0 8px;font-size:11px}
-#settings-panel .settings-harness{margin-top:18px;padding-top:10px;border-top:1px solid var(--line)}
+#settings-panel .settings-harness{margin:0 0 18px;padding-bottom:10px;border-bottom:1px solid var(--line)}
 #settings-panel .settings-empty{color:var(--dim);font-size:11.5px;padding:5px 0}
 #settings-panel .settings-error{color:#f38ba8;font-size:11.5px;margin:5px 0}
 #settings-panel .settings-status{color:#8bd5ca;font-size:11px;min-height:16px;margin:4px 0}
@@ -277,8 +284,8 @@ body:has(#mea.on) #side{z-index:6}
     </div>
   </div>
   <div id="settings-status" class="settings-status" aria-live="polite"></div>
-  <div id="settings-common"></div>
   <div id="settings-harness" class="settings-harness"></div>
+  <div id="settings-common"></div>
 </section>
 <div id="bar">
   <div id="brand"><button id="brandmark" title="Breadcrumbs settings" aria-label="Open Breadcrumbs settings"><svg viewBox="0 0 58 58" aria-hidden="true"><g fill="#0b0b0d"><circle cx="12" cy="44" r="5"/><circle cx="26" cy="34" r="5"/><circle cx="38" cy="22" r="5.5"/><circle cx="48" cy="10" r="6"/></g></svg></button><span>breadcrumbs</span><span id="brandlinks"><a id="agency-pages" href="https://breadcrumbs-agency.github.io/" target="_blank" rel="noopener" title="Breadcrumbs Agency GitHub Pages">agency pages</a><a id="agency-repo" href="https://github.com/breadcrumbs-agency/breadcrumbs-codex" target="_blank" rel="noopener" title="Breadcrumbs Codex repository">repo</a></span><span id="harness" hidden><img id="hicon" alt="" width="20" height="20"><span id="hname"></span><span id="hlinks"><a id="hpages" target="_blank" rel="noopener" title="Harness GitHub Pages">pages</a><a id="hrepo" target="_blank" rel="noopener" title="Harness repository">repo</a></span></span></div>
@@ -401,6 +408,16 @@ function settingControl(field) {
   }
   if (field.kind !== "bool") control.value = field.value == null ? "" : field.value;
   else control.checked = !!field.value;
+  // A number with both bounds is a dial to slide (grow and fold strength): a range input beside the number, kept equal.
+  if (field.kind !== "bool" && field.kind !== "choice" && field.min != null && field.max != null && field.max > field.min) {
+    const slider = document.createElement("input"); slider.type = "range"; slider.className = "dial";
+    slider.min = field.min; slider.max = field.max; slider.step = field.kind === "float" ? (field.max - field.min) / 100 : 1;
+    slider.value = control.value; slider.setAttribute("aria-label", field.key);
+    slider.oninput = () => { control.value = field.kind === "float" ? +(+slider.value).toFixed(3) : slider.value; };
+    control.oninput = () => { slider.value = control.value; };
+    const wrap = document.createElement("div"); wrap.className = "dialbox"; wrap.append(slider, control); control._wrap = wrap;
+  }
+  if (field.kind === "bool") control.classList.add("switch");
   return control;
 }
 function settingsButton(label, handler, disabled) {
@@ -420,7 +437,7 @@ function settingRow(field, target, model) {
     try { await apiWrite("delete", target, field.key); await loadSettings(); }
     catch (e) { setSettingsStatus(e.message, true); }
   }, !field.overridden);
-  row.append(name, control, doc, source, save, revert);
+  row.append(name, control._wrap || control, doc, source, save, revert);
   return row;
 }
 function settingsGroup(title, fields, target, model) {

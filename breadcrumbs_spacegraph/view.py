@@ -1729,7 +1729,8 @@ class View(Reader):
         # A common-dial mutation must never be forwarded as a harness setting
         # mutation.  The widget needs the current harness section in the same
         # response, so read it while the common target is being edited.
-        harness = custom(action, payload) if custom and target == "harness" else custom("get", payload) if custom else None
+        harness = (custom(self.root, action, payload) if custom and target == "harness"
+                   else custom(self.root, "get", payload) if custom else None)  # ports.settings(root, action, payload)
         return {"common": common, "harness": harness, "harness_key": here}
 
     def _edge_ts(self, ref, last):
