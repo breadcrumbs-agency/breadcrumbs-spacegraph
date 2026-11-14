@@ -21,7 +21,7 @@ from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from breadcrumbs import dials, metrics, ports, statedb
+from breadcrumbs import dials, metrics, ports, scope as scopes, statedb
 from breadcrumbs.crumbs import Crumb, is_crumb
 from breadcrumbs.history import _ref_name
 from breadcrumbs.index import cue_edges
@@ -637,9 +637,9 @@ class _Measures:
         for r in models or ():
             self.cost_by.setdefault(r.get("session_id"), []).append(r)
         self.ace_by, self.use_by = {}, {}
-        for r in ace_requests(v.root):
+        for r in ace_requests(v.base):
             self.ace_by.setdefault(r["sess"], []).append(r)
-        for r in usage_requests(v.root):
+        for r in usage_requests(v.base):
             self.use_by.setdefault(r["sess"], []).append(r)
         with v.lock:
             self.collect()
@@ -1284,6 +1284,7 @@ class View(Reader):
     def __init__(self, root, clock=time.time, hide=None):
         """Open a store to read: see Reader. clock: the time of the glow (heat) of a crumb."""
         super().__init__(root, hide)
+        self.base = scopes.base_of(root)  # the logs (ace.log, usage.log) are the base's, not a scope's: a scope reads them from here
         self.clock = clock
         self.db_connect = None  # sqlite3.connect for state.db (a test can pass one that watches the reads)
         self._walks, self._events = OrderedDict(), {}  # measures(): crumb trees by session crumb id, receipts by head
@@ -1538,7 +1539,7 @@ class View(Reader):
         base, layer, exact and held. all: the totals of every session in the log (ace_totals). Reads only."""
         with self.lock:
             by = {}
-            for r in ace_requests(self.root):
+            for r in ace_requests(self.base):
                 by.setdefault(r["sess"], []).append(r)
             by.pop("-", None)  # a request that no session owns
             for sess in [s for s in by if self._hidden(s, True)]:  # a line holds the first characters of the id
@@ -1551,6 +1552,62 @@ class View(Reader):
             pts = series.get(hit, [])
             return {"current": newest, "session": hit, "target": next((p["target"] for p in reversed(pts) if p["target"]), None),
                     "points": pts, "candles": ace_candles(pts, per), "mix": ace_mix(pts), "all": ace_totals(series)}
+
+    def evidence(self, sid=None, harness=""):
+        """The evidence QR of the harness box: where() as one compact line, cut into codes that each hold what one QR holds (a
+        chain "i/n|..." when it is longer). {"text": the line, "parts": [one matrix per code, as rows of 0 and 1]}.
+        The line has names, paths, ids and numbers only: no crumb text and no token."""
+        from . import qr
+        info = self.where(sid)
+        if harness:
+            info["harness"] = harness
+        text = "breadcrumbs-where/1 " + json.dumps(info, separators=(",", ":"), sort_keys=True, ensure_ascii=False)
+        return {"text": text, "parts": [qr.rows(qr.encode(p, "M")) for p in qr.chain(text, "M")]}
+
+    def where(self, sid=None):
+        """The evidence of where this view reads: the store (a profile's, or the scope of a folder), the profile, the folder
+        (pwd: the root in scope.json; "" for a profile store, which holds every folder), and for one chat (sid, else the
+        newest in ace.log) the pid that wrote its last ace.log line and the sizes of its last request, ACE's and the provider's.
+        Names, paths, ids and numbers only: no crumb text and no token. Reads only."""
+        root = os.path.abspath(self.root)
+        try:
+            with open(os.path.join(root, "scope.json"), encoding="utf-8") as f:
+                scope = json.load(f)
+        except (OSError, ValueError):
+            scope = {}
+        scope = scope if isinstance(scope, dict) else {}
+        home = os.path.dirname(os.path.dirname(os.path.dirname(root))) if os.path.basename(os.path.dirname(root)) == "scopes" \
+            else os.path.dirname(root)  # the folder that holds the store: a Hermes profile (or ~/.hermes)
+        profile = os.path.basename(home) if os.path.basename(os.path.dirname(home)) == "profiles" \
+            else "default" if os.path.basename(home) == ".hermes" else ""
+        me = os.path.expanduser("~")
+        shown = lambda p: "~" + p[len(me):] if p == me or p.startswith(me + os.sep) else p
+        out = {"store": shown(root), "kind": "scope" if scope.get("id") else "profile", "scope": str(scope.get("id") or ""),
+               "pwd": shown(str(scope.get("root") or "")), "profile": profile, "viewer_pid": os.getpid(),
+               "sess": "", "writer": None, "ace": None, "usage": None}
+        got = self.ace(sid or None)
+        sess = got["session"]
+        if sess:
+            out["sess"] = str(sid) if str(sid or "").startswith(sess) else sess
+            last = got["points"][-1] if got["points"] else None
+            if last:
+                out["ace"] = {k: last.get(k) for k in ("ts", "act", "raw", "sent", "base", "lay", "target", "folds")}
+                out["ace"]["requests"] = len(got["points"])
+            pid = None
+            for name in ACE_LOG:  # oldest first: the last line of the chat holds the pid of the process that wrote it
+                try:
+                    with open(os.path.join(self.base, name), encoding="utf-8", errors="replace") as f:
+                        for line in f:
+                            kv = dict(ACE_KV.findall(line[19:]))
+                            if kv.get("sess") == sess and kv.get("pid", "").isdigit():
+                                pid = int(kv["pid"])
+                except OSError:
+                    continue
+            out["writer"] = pid
+            mine = [r for r in usage_requests(self.base) if r["task"] == "main" and r["sess"].startswith(sess)]
+            if mine:
+                out["usage"] = {"ts": mine[-1]["ts"], "prompt": mine[-1]["prompt"], "model": mine[-1]["model"], "requests": len(mine)}
+        return out
 
     def crumb_or_none(self, ref):
         """The crumb with this id, or None when the store has no crumb of that id."""
@@ -1712,7 +1769,7 @@ def hide_of(root):
     """What the views of the store at root leave out: the port "hide" for the profile of the store (novis.Hide of the
     harness), or None when no harness gives one."""
     hide = ports.get("hide")
-    return hide(os.path.dirname(os.path.abspath(root))) if hide else None
+    return hide(os.path.dirname(scopes.base_of(root))) if hide else None
 
 
 API = {
@@ -1735,6 +1792,8 @@ EXPLORER_API = {
                                              q.get("lines") == "1", int(q.get("limit", ROWS_MAX)), q.get("names") == "1"),
     "/api/measures/labels": lambda v, q: v.labels([r for r in q.get("refs", "").split("|") if r]),  # {ref: full label}
     "/api/calendar": lambda v, q: v.calendar(int(q.get("limit", CAL_MAX))),  # when each session ran: the calendar layout of the map
+    "/api/where": lambda v, q: v.where(q.get("sid") or None),  # the evidence QR of the harness box: store, scope, profile, folder, chat
+    "/api/qr": lambda v, q: v.evidence(q.get("sid") or None, q.get("h") or ""),  # the codes of the evidence line (view.evidence)
     "/api/harness": lambda v, q: harness_info(q.get("h") or None),  # the program of this view and the icons: the mark beside the brand
 }
 
