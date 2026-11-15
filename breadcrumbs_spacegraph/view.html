@@ -2209,9 +2209,11 @@ function leaseBands(s, pts, px, m, H, items) {
   for (const ls of items) {
     const x0 = px(at(ls.start)), w = Math.max(2, px(at(ls.end)) - x0);
     const col = ls.why === "rotated" ? TK.fold : ls.why === "open" ? TK.sent : "var(--faint)";
-    const r = sv("rect", {x: x0, y: top, width: w, height: h, rx: 2, fill: col, opacity: .16});
-    r.append(sv("title", {}, `${hms(ls.start)} to ${hms(ls.end)} · ${Math.round(ls.secs)} s · ${ls.why} · ${ls.write_tok.toLocaleString()} tokens written · ${ls.reads} reads`));
-    s.append(r);
+    const when = `${hms(ls.start)} to ${hms(ls.end)} · ${Math.round(ls.secs)} s · ${ls.why} · ${ls.write_tok.toLocaleString()} tokens written · ${ls.reads} reads`;
+    const r = sv("rect", {x: x0, y: top, width: w, height: h, rx: 2, fill: col, opacity: .28});
+    r.append(sv("title", {}, when)); s.append(r);
+    const strip = sv("rect", {x: x0, y: top, width: w, height: 5, rx: 2, fill: col, opacity: .9});
+    strip.append(sv("title", {}, when)); s.append(strip);
     if (ls.why === "rotated") s.append(sv("line", {x1: x0 + w, x2: x0 + w, y1: top, y2: top + h, stroke: TK.fold, "stroke-width": 1.5, opacity: .8}));
   }
 }
