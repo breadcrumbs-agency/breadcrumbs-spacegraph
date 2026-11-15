@@ -1706,32 +1706,63 @@ class View(Reader):
                     out[ref] = ref
         return out
 
+    def config_layers(self):
+        """The config files that this view may show and change (the port "config_layers" of the harness), each with
+        its id, label, folder, parent and the chats that read it. With no harness that gives the port: this store's own
+        config.json. A write goes only to a file of this list, chosen by its id; the page never names a path."""
+        port = ports.get("config_layers")
+        got = [dict(item) for item in (port(self.root) if port else None) or () if isinstance(item, dict)]
+        if not any(item.get("here") for item in got):
+            got.insert(0, {"id": "store", "kind": "store", "label": "this memory", "path": self.root, "parent": None,
+                           "applies": "the chats that write this memory", "here": True})
+        for item in got:
+            item["exists"] = os.path.isfile(os.path.join(item["path"], "config.json"))
+        return got
+
     def settings(self, action="get", payload=None):
-        """Read or mutate common dials plus the selected harness's optional settings port."""
+        """Read or mutate common dials plus the selected harness's optional settings port.
+
+        payload["layer"] names the config file (an id of config_layers; default: this store's). Its values resolve
+        through its parent first (a scope's file over its profile's), as the harness reads them for a chat there. The
+        environment of this viewer is left out: a harness process has its own, which wins over every file."""
         payload = dict(payload or {})
         model = payload.get("model") or ""
         target = payload.get("target", "common")
-        if action == "get" or target == "harness":
-            common = dials.settings(self.root, model)
+        layers = self.config_layers()
+        by_id = {item["id"]: item for item in layers}
+        layer_id = str(payload.get("layer") or next(item["id"] for item in layers if item.get("here")))
+        if layer_id not in by_id:
+            raise ValueError("unknown config file: %s" % layer_id)
+        layer = by_id[layer_id]
+        parent = by_id.get(layer.get("parent"))
+        chain = ([(parent["kind"], parent["path"])] if parent else []) + [(layer["kind"], layer["path"])]
+        folder = layer["path"]
         if target == "common" and action == "set":
-            common = dials.set_setting(self.root, payload.get("key"), payload.get("value"), model)
+            dials.set_setting(folder, payload.get("key"), payload.get("value"), model)
         elif target == "common" and action == "delete":
-            common = dials.delete_setting(self.root, payload.get("key"), model)
+            dials.delete_setting(folder, payload.get("key"), model)
         elif target == "common" and action == "reset":
-            common = dials.reset_settings(self.root, model, bool(payload.get("all_models")))
+            dials.reset_settings(folder, model, bool(payload.get("all_models")))
         elif action != "get" and target != "harness":
             raise ValueError("unknown settings action: %s" % action)
+        common = dials.settings_chain(chain, model, environ={})
 
         requested = str(payload.get("harness") or payload.get("h") or "").strip()
         here = harness_info(requested).get("here")
         entry = ports.harnesses().get(here) if here else None
         custom = entry.get("settings") if entry else None
+        # The harness section belongs to the profile of the chosen file (its parent for a scope), not to the store
+        # that this view happens to show.
+        owner = (parent or layer)["path"]
         # A common-dial mutation must never be forwarded as a harness setting
         # mutation.  The widget needs the current harness section in the same
         # response, so read it while the common target is being edited.
-        harness = (custom(self.root, action, payload) if custom and target == "harness"
-                   else custom(self.root, "get", payload) if custom else None)  # ports.settings(root, action, payload)
-        return {"common": common, "harness": harness, "harness_key": here}
+        harness = (custom(owner, action, payload) if custom and target == "harness"
+                   else custom(owner, "get", payload) if custom else None)  # ports.settings(root, action, payload)
+        return {"common": common, "harness": harness, "harness_key": here, "layer": layer_id,
+                "layers": [dict({k: item.get(k) for k in ("id", "kind", "label", "parent", "applies", "here", "exists",
+                                                          "profile")}, path=os.path.join(item["path"], "config.json"))
+                           for item in layers]}
 
     def _edge_ts(self, ref, last):
         """The time of the first (or last) leaf of a crumb: the way down follows one kid, so it reads a few crumbs, not the tree."""

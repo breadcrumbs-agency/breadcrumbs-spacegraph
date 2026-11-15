@@ -83,6 +83,43 @@ class Settings(unittest.TestCase):
         self.assertIn("ace_fold_to", groups["ACE fold (per model)"])
         self.assertIn("ace_tokens", groups["ACE thresholds (per model)"])
 
+    def test_the_config_file_is_chosen_by_its_id_and_a_scope_reads_through_its_profile(self):
+        profile, scoped = os.path.join(self.root, "prof"), os.path.join(self.root, "prof", "scopes", "repo-1")
+        os.makedirs(scoped)
+        with open(os.path.join(profile, "config.json"), "w", encoding="utf-8") as f:
+            json.dump({"neighbor": 0.3, "ace_tokens": 250000}, f)
+        before = ports._given.get("config_layers")
+        self.addCleanup(lambda: ports._given.__setitem__("config_layers", before) if before else
+                        ports._given.pop("config_layers", None))
+        ports.give("config_layers", lambda root: [
+            {"id": "profile:p", "kind": "profile", "label": "profile p", "path": profile, "parent": None,
+             "applies": "every chat of p", "profile": "p", "here": False},
+            {"id": "scope:p:repo-1", "kind": "scope", "label": "p / ~/repo", "path": scoped, "parent": "profile:p",
+             "applies": "the chats of p in ~/repo", "profile": "p", "here": False}])
+        current = view.View(self.root)
+        self.addCleanup(current.close)
+
+        got = current.settings("get", {})
+        self.assertEqual(got["layer"], "store")  # no file of the list is this view's: its own config.json comes first
+        self.assertEqual([l["id"] for l in got["layers"]], ["store", "profile:p", "scope:p:repo-1"])
+
+        got = current.settings("set", {"target": "common", "key": "ace_tokens", "value": 120000, "layer": "scope:p:repo-1"})
+        rows = {r["key"]: r for g in got["common"]["groups"] for r in g["rows"]}
+        self.assertEqual((rows["ace_tokens"]["value"], rows["ace_tokens"]["source"]), (120000, "scope"))
+        self.assertEqual((rows["neighbor"]["value"], rows["neighbor"]["source"]), (0.3, "profile"))
+        with open(os.path.join(scoped, "config.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {"ace_tokens": 120000})
+        with open(os.path.join(profile, "config.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["ace_tokens"], 250000)  # the profile's file is untouched
+        self.assertFalse(os.path.exists(os.path.join(self.root, "config.json")))
+
+        with self.assertRaisesRegex(ValueError, "unknown config file"):
+            current.settings("set", {"target": "common", "key": "ace_tokens", "value": 1, "layer": "/etc"})
+
+    def test_the_page_offers_the_config_files_and_sends_the_choice(self):
+        page = open(os.path.join(os.path.dirname(view.__file__), "view.html"), encoding="utf-8").read()
+        for needle in ('id="settings-layer"', "layer: settingsLayer", 'id="settings-applies"', "optgroup"):
+            self.assertIn(needle, page)
 
 if __name__ == "__main__":
     unittest.main()

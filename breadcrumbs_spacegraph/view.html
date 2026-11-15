@@ -48,6 +48,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 #settings-panel input,#settings-panel select{height:27px;padding:0 7px;border:1px solid var(--line2);border-radius:6px;background:var(--bg);color:var(--fg);font:12px var(--mono)}
 #settings-panel input[type=checkbox]{height:16px;width:16px;accent-color:var(--accent)}
 #settings-panel .settings-bar input{width:180px}
+#settings-panel .settings-bar select#settings-layer{max-width:340px}
 #settings-panel .settings-actions{display:flex;gap:6px;margin-left:auto}
 #settings-panel .settings-group{margin:12px 0 16px}
 #settings-panel .settings-group h4{margin:0 0 4px;font-size:11px;color:var(--dim);letter-spacing:.07em;text-transform:uppercase}
@@ -274,8 +275,9 @@ body:has(#mea.on) #side{z-index:6}
 <div id="evidence" hidden role="dialog" aria-label="where this view reads from"></div>
 <section id="settings-panel" hidden role="dialog" aria-label="Breadcrumbs settings">
   <header><h3>Breadcrumbs settings</h3><button class="x" id="settings-close" title="Close settings">&times;</button></header>
-  <div class="settings-note">Common Breadcrumbs dials are stored with this memory. Harness settings stay separate and are shown below when the active harness provides them.</div>
+  <div class="settings-note">Common Breadcrumbs dials live in config.json files: one for each profile, and one for each scope (a git repository or folder) that a chat of the profile worked in. Pick the file; a scope's file is read after its profile's. Harness settings stay separate and are shown below when the active harness provides them.</div>
   <div class="settings-bar">
+    <label>Config file <select id="settings-layer" title="Which config.json: a profile's, or a scope's (its git repository or folder)"></select></label>
     <label>Model <input id="settings-model" placeholder="profile-wide"></label>
     <div class="settings-actions">
       <button class="btn" id="settings-reload">Reload</button>
@@ -283,6 +285,7 @@ body:has(#mea.on) #side{z-index:6}
       <button class="btn" id="settings-reset-all">Reset all dials</button>
     </div>
   </div>
+  <div id="settings-applies" class="settings-note"></div>
   <div id="settings-status" class="settings-status" aria-live="polite"></div>
   <div id="settings-harness" class="settings-harness"></div>
   <div id="settings-common"></div>
@@ -376,8 +379,29 @@ function showHarness(r) {
 }
 // -- settings: the common dials and the active harness's own controls share one CRUD widget, but never one storage layer.
 let settingsRequest = 0;
+let settingsLayer = "";  // the id of the config file the widget shows (view.config_layers); "" is this memory's own
+// The config files that the harness names (a profile's, each scope's), grouped by profile, with the chats that read each.
+function renderLayers(answer) {
+  const select = $("settings-layer"), layers = answer.layers || [];
+  settingsLayer = answer.layer || "";
+  select.replaceChildren();
+  const groups = new Map();
+  layers.forEach(l => { const g = l.profile || ""; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(l); });
+  groups.forEach((items, name) => {
+    const parent = name ? document.createElement("optgroup") : select;
+    if (name) { parent.label = "profile " + name; select.append(parent); }
+    items.forEach(l => {
+      const o = document.createElement("option"); o.value = l.id;
+      o.textContent = (l.kind === "scope" ? "\u2003scope " + l.label.split(" / ").slice(1).join(" / ") : l.label) + (l.here ? "  (this view)" : "") + (l.exists ? "" : "  (no file yet)");
+      parent.append(o);
+    });
+  });
+  select.value = settingsLayer;
+  const l = layers.find(x => x.id === settingsLayer);
+  $("settings-applies").textContent = l ? "Applies to " + l.applies + ". File: " + l.path : "";
+}
 function apiWrite(action, target, key, value) {
-  const body = {action, target, harness: HARNESS.key || ""};
+  const body = {action, target, harness: HARNESS.key || "", layer: settingsLayer};
   if (key) body.key = key;
   if (value !== undefined) body.value = value;
   return fetch("api/settings?" + new URLSearchParams({k: KEY, h: HARNESS.key || ""}), {
@@ -453,7 +477,8 @@ function renderSettings(answer) {
   const common = answer.common || {}, model = common.model || "";
   const commonBox = $("settings-common"); commonBox.replaceChildren();
   const title = document.createElement("div"); title.className = "settings-note";
-  title.textContent = "Common dials · " + (common.path || "breadcrumbs/config.json") + (model ? " · model " + model : " · profile-wide"); commonBox.append(title);
+  title.textContent = "Common dials · " + (common.path || "breadcrumbs/config.json") + (model ? " · model " + model : " · profile-wide") + ((common.chain || []).length > 1 ? " · read after " + common.chain[0].path : "") + " · the environment of a running chat (BREADCRUMBS_*) wins over every file"; commonBox.append(title);
+  renderLayers(answer);
   (common.groups || []).forEach(group => commonBox.append(settingsGroup(group.name, group.rows || [], "common", model)));
 
   const harnessBox = $("settings-harness"); harnessBox.replaceChildren();
@@ -473,7 +498,7 @@ async function loadSettings() {
   const request = ++settingsRequest;
   setSettingsStatus("Loading settings…");
   try {
-    const r = await api("settings", {harness: HARNESS.key || "", model: $("settings-model").value.trim()});
+    const r = await api("settings", {harness: HARNESS.key || "", model: $("settings-model").value.trim(), layer: settingsLayer});
     if (request !== settingsRequest) return;
     renderSettings(r); setSettingsStatus("Settings loaded.");
   } catch (e) { if (request === settingsRequest) setSettingsStatus(e.message, true); }
@@ -487,13 +512,14 @@ $("brandmark").addEventListener("click", toggleSettings);
 $("settings-close").addEventListener("click", () => { $("settings-panel").hidden = true; });
 $("settings-reload").addEventListener("click", loadSettings);
 $("settings-model").addEventListener("change", loadSettings);
+$("settings-layer").addEventListener("change", () => { settingsLayer = $("settings-layer").value; loadSettings(); });
 $("settings-reset").addEventListener("click", async () => {
   try { await apiWrite("reset", "common", null, undefined); await loadSettings(); }
   catch (e) { setSettingsStatus(e.message, true); }
 });
 $("settings-reset-all").addEventListener("click", async () => {
   try {
-    const body = {action: "reset", target: "common", all_models: true, harness: HARNESS.key || ""};
+    const body = {action: "reset", target: "common", all_models: true, harness: HARNESS.key || "", layer: settingsLayer};
     await fetch("api/settings?" + new URLSearchParams({k: KEY, h: HARNESS.key || ""}), {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)}).then(r => r.ok ? r.json() : Promise.reject(new Error("settings reset failed: HTTP " + r.status)));
     await loadSettings();
   } catch (e) { setSettingsStatus(e.message, true); }
