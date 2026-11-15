@@ -2192,10 +2192,12 @@ function trkGrid() {  // the columns of the charts (fewer in a narrow window) an
   const inner = $("trk").clientWidth - 28, cols = inner >= 960 ? 3 : inner >= 640 ? 2 : 1, col = (inner - (cols - 1) * 10) / cols;
   return {cols, w: n => Math.max(200, Math.floor(Math.min(n, cols) * col + (Math.min(n, cols) - 1) * 10 - 26))};
 }
-// the cache leases drawn as bands behind the context-size lines: each band runs from a lease's first write to its end,
-// placed on the request axis by time (interpolated between the requests either side). Orange: ended by a cache break;
-// grey: expired; blue: still open.
-function leaseBands(s, pts, px, m, H, items) {
+// the cache leases drawn on the context-size chart. Each lease is a bar at its Y value, the cached prefix (tokens, the
+// largest cache read + write seen), running on the request axis from its first write to its end (interpolated by time
+// between the requests either side). A bead marks its start on the X axis line, and the prefix size is written at its
+// end. Colour: violet for a lease ended by a cache break; dashed for one still open; grey for one that expired. Violet
+// is not the fold orange, so the bars and the fold marks stay apart.
+function leaseBands(s, pts, px, y, items) {
   if (!items.length || !pts.length) return;
   const at = t => {
     if (t <= pts[0].ts) return 0;
@@ -2205,16 +2207,16 @@ function leaseBands(s, pts, px, m, H, items) {
     }
     return pts.length - 1;
   };
-  const top = m.t, h = H - m.t - m.b;
   for (const ls of items) {
-    const x0 = px(at(ls.start)), w = Math.max(2, px(at(ls.end)) - x0);
-    const col = ls.why === "rotated" ? TK.fold : ls.why === "open" ? TK.sent : "var(--faint)";
-    const when = `${hms(ls.start)} to ${hms(ls.end)} · ${Math.round(ls.secs)} s · ${ls.why} · ${ls.write_tok.toLocaleString()} tokens written · ${ls.reads} reads`;
-    const r = sv("rect", {x: x0, y: top, width: w, height: h, rx: 2, fill: col, opacity: .28});
-    r.append(sv("title", {}, when)); s.append(r);
-    const strip = sv("rect", {x: x0, y: top, width: w, height: 5, rx: 2, fill: col, opacity: .9});
-    strip.append(sv("title", {}, when)); s.append(strip);
-    if (ls.why === "rotated") s.append(sv("line", {x1: x0 + w, x2: x0 + w, y1: top, y2: top + h, stroke: TK.fold, "stroke-width": 1.5, opacity: .8}));
+    if (!ls.prefix) continue;
+    const x0 = px(at(ls.start)), x1 = Math.max(x0 + 3, px(at(ls.end))), yv = y(ls.prefix);
+    const col = ls.why === "rotated" ? TK.layer : ls.why === "open" ? TK.layer : "var(--faint)";
+    const when = `${hms(ls.start)} to ${hms(ls.end)} · ${Math.round(ls.secs)} s · ${ls.why} · cache ${ls.prefix.toLocaleString()} tokens · ${ls.write_tok.toLocaleString()} written · ${ls.reads} reads`;
+    const bar = sv("rect", {x: x0, y: yv - 1.5, width: x1 - x0, height: 3, rx: 1.5, fill: col, opacity: ls.why === "open" ? .5 : .85});
+    if (ls.why === "open") bar.setAttribute("stroke-dasharray", "4 3");
+    bar.append(sv("title", {}, when)); s.append(bar);
+    const bead = sv("circle", {cx: x0, cy: yv, r: 3, fill: col, stroke: "var(--card)", "stroke-width": 1.5});
+    bead.append(sv("title", {}, when)); s.append(bead);
   }
 }
 // the line: sent, without ACE, the model's count, the target, and a mark on each fold
@@ -2227,7 +2229,7 @@ function lineChart(d) {
   const s = sv("svg", {viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img",
     "aria-label": `Context size over ${pts.length} requests, ${pts.filter(p => p.act === "fold").length} folds`});
   s.append(axes(W, H, m, ymax, ticks, y));
-  leaseBands(s, pts, px, m, H, (d.leases || {}).items || []);
+  leaseBands(s, pts, px, y, (d.leases || {}).items || []);
   for (const i of new Set([0, Math.floor((pts.length - 1) / 2), pts.length - 1]))
     s.append(sv("text", {x: px(i), y: H - 6, "text-anchor": i === 0 ? "start" : i === pts.length - 1 ? "end" : "middle"}, hms(pts[i].ts)));
   const path = (f, v) => pts.map((p, i) => f(p) == null ? null : (i && pts[i - 1] && f(pts[i - 1]) != null ? "L" : "M") + px(i).toFixed(1) + " " + y(v(p)).toFixed(1)).filter(Boolean).join(" ");
@@ -2261,7 +2263,7 @@ function lineChart(d) {
       e.clientX - bx.left, e.clientY - bx.top);
   });
   hit.addEventListener("mouseleave", () => { t.hide(); cross.setAttribute("opacity", 0); dot.setAttribute("opacity", 0); });
-  const keys = [["sent", TK.sent], ["without ACE", TK.raw], ["the model's count", TK.seen], ["target", "var(--faint)"], ["fold", TK.fold, "d"], ["cache lease", "var(--faint)", ""]];
+  const keys = [["sent", TK.sent], ["without ACE", TK.raw], ["the model's count", TK.seen], ["target", "var(--faint)"], ["fold", TK.fold, "d"], ["cache lease (at its cached size)", TK.layer, "d"]];
   if (pts.some(p => p.act === "ratchet")) keys.push(["target raised (ratchet)", TK.fold, "r"]);  // a ring, as on the line
   box.append(keyRow(keys));
   return box;
