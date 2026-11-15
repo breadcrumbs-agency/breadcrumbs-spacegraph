@@ -39,11 +39,12 @@ PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "view.html")
 
 
 def page(root=None):
-    """The explorer page as bytes, with its poll interval from the dial update_ms of the store at root (dials.top)."""
+    """The explorer page as bytes, with its poll interval from the dial update_ms of the store at root (dials.top), and
+    whether it checks for changes from the dial live (dials.top)."""
     with open(PAGE, encoding="utf-8") as f:
         html = f.read()
     ms = dials.top(root, "update_ms")
-    return html.replace("__UPDATE_MS__", str(ms)).encode("utf-8")
+    return html.replace("__UPDATE_MS__", str(ms)).replace("__LIVE__", "1" if dials.top(root, "live") else "0").encode("utf-8")
 HEAT_HALF = 86400.0  # seconds: the glow of a crumb the model opened halves each day
 ACE_LOG = ("ace.log.1", "ace.log")  # oldest first
 ACE_KV = re.compile(r"(\w+)=(\S+)")
@@ -1706,6 +1707,34 @@ class View(Reader):
                     out[ref] = ref
         return out
 
+    def changes(self):
+        """What changed in the data of this view, for the live page: a stamp of this store (index.db and refs), of the
+        harness logs of this profile (ace.log, usage.log in the base), and of each config file in this chat's chain (the
+        scope's file and its profile's, the files settings resolves here). Files of other profiles and scopes are not
+        stamped. A stamp is the file's modification time and size, so nothing is read or parsed; the page reloads only
+        the part that changed."""
+        def sig(*paths):
+            out = []
+            for p in paths:
+                try:
+                    st = os.stat(p)
+                    out.append("%d:%d" % (st.st_mtime_ns, st.st_size))
+                except OSError:
+                    out.append("-")
+            return "|".join(out)
+
+        layers = self.config_layers()
+        by_id = {item["id"]: item for item in layers}
+        item, chain, seen = next(item for item in layers if item.get("here")), [], set()
+        while item and item["id"] not in seen:
+            seen.add(item["id"])
+            chain.append(item)
+            item = by_id.get(item.get("parent"))
+        return {"scope": scopes.scope_id(self.root), "profile": os.path.basename(os.path.dirname(self.base)),
+                "store": sig(os.path.join(self.root, "index.db"), os.path.join(self.root, "refs")),
+                "logs": sig(os.path.join(self.base, "ace.log"), os.path.join(self.base, "usage.log")),
+                "config": {c["id"]: sig(os.path.join(c["path"], "config.json")) for c in chain}}
+
     def config_layers(self):
         """The config files that this view may show and change (the port "config_layers" of the harness), each with
         its id, label, folder, parent and the chats that read it. With no harness that gives the port: this store's own
@@ -1854,6 +1883,7 @@ EXPLORER_API = {
     "/api/qr": lambda v, q: v.evidence(q.get("sid") or None, q.get("h") or ""),  # the codes of the evidence line (view.evidence)
     "/api/harness": lambda v, q: harness_info(q.get("h") or None),  # the program of this view and the icons: the mark beside the brand
     "/api/settings": lambda v, q: v.settings("get", q),
+    "/api/changes": lambda v, q: v.changes(),  # the live page: which of its data changed (store, logs, this chat's config)
 }
 
 

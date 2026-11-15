@@ -3632,6 +3632,7 @@ function meaFooter() {
 
 // the poll interval in milliseconds: the dial update_ms (view.py fills it in; opened as a file, it is the default 2000)
 const UPDATE_MS = Number("__UPDATE_MS__") || 2000;
+const LIVE_ON = "__LIVE__" !== "0";  // the dial live (on by default; off, the page does not ask the store what changed)
 // -- on and off, the frame, the poll ------------------------------------------------------------------------------------------------
 let meaLast = 0;
 function meaFrame(t) {
@@ -3739,6 +3740,27 @@ function meaDrawUsage(sid, d) {
   [box.scrollLeft, box.scrollTop] = keep;
 }
 showTrail(); load(); follow(); setInterval(follow, UPDATE_MS); setInterval(context, UPDATE_MS); setInterval(trk, UPDATE_MS); trk();
+// Live: every UPDATE_MS the page asks which of its data changed (api/changes). The store or its logs changed: the graph
+// is read again (the nodes stay where they are; the cue edges are replaced, not added to). This chat's config changed:
+// the settings panel reads it again when it is open. Nothing is reloaded while nothing changed.
+let LIVE = null;
+async function liveCheck() {
+  if (!LIVE_ON || document.hidden) return;
+  let s;
+  try { s = await api("changes"); } catch (e) { return; }
+  if (!LIVE) { LIVE = {store: s.store, logs: s.logs, config: JSON.stringify(s.config)}; return; }
+  const cfg = JSON.stringify(s.config);
+  if ((s.store !== LIVE.store || s.logs !== LIVE.logs) && GRAPH.started && GRAPH.state !== "loading") {
+    LIVE.store = s.store; LIVE.logs = s.logs;
+    cueEdges.length = 0; GRAPH.state = "idle";
+    if (layout === "calendar") calLoad(); else loadGraph();
+  }
+  if (cfg !== LIVE.config) {
+    LIVE.config = cfg;
+    if (!$("settings-panel").hidden) loadSettings();
+  }
+}
+setInterval(liveCheck, UPDATE_MS); if (LIVE_ON) liveCheck();
 const start = HASH.get("focus");
 if (start) setTimeout(() => revealId(start), 600);
 requestAnimationFrame(frame);
