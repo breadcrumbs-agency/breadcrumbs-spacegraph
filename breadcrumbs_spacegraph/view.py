@@ -1271,6 +1271,9 @@ class _Measures:
             total = {}
             for r in self.top:  # the lineage roots hold everything below them: this is the grand total, in either mode
                 _roll(total, self.incl[r], self.agg)
+            # usage.log lines with no session (sess=-: compression, goal_judge) belong to no root, but their tokens were spent
+            _roll(total, _nums(self.facts_usage("-")), self.agg)
+            _roll(total, _nums(self.facts_cache("-")), self.agg)
             totals = [[k[1], k[0], self.num(v, k[1]), k[2], k[3]] + ([list(v)] if self.agg[k[1]] == "ratio" else [])
                       for k, v in sorted(total.items(), key=lambda kv: (kv[0][1], kv[0][0], kv[0][2] or "", kv[0][3] or ""))
                       if self.num(v, k[1]) is not None or self.agg[k[1]] != "ratio"]
