@@ -3776,7 +3776,11 @@ async function liveCheck() {
   if (!LIVE_ON || document.hidden) return;
   let s;
   try { s = await api("changes"); } catch (e) { return; }
-  if (!LIVE) { LIVE = {store: s.store, logs: s.logs, config: JSON.stringify(s.config)}; return; }
+  const viz = JSON.stringify(s.viz || {});
+  if (!LIVE) { LIVE = {store: s.store, logs: s.logs, config: JSON.stringify(s.config), viz}; return; }
+  // The dials update_ms and live are baked into this page at load. A change to either in any file of the chain
+  // reloads the page so the new interval takes effect; the rest of the page updates in place as before.
+  if (viz !== LIVE.viz) { LIVE.viz = viz; location.reload(); return; }
   const cfg = JSON.stringify(s.config);
   if ((s.store !== LIVE.store || s.logs !== LIVE.logs) && GRAPH.started && GRAPH.state !== "loading") {
     LIVE.store = s.store; LIVE.logs = s.logs;

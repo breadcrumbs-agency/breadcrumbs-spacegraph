@@ -122,3 +122,35 @@ class LiveDial(unittest.TestCase):
             f.write('{"live": false}')
         html = view.page(self.root).decode("utf-8")
         self.assertIn('const LIVE_ON = "0" !== "0";', html)
+
+
+class VizDials(Live):
+    """The two viewer dials travel with the live stamp: the page and the stamp resolve them through one chain."""
+
+    def test_stamp_reports_the_resolved_dials(self):
+        self.chain()
+        v = view.View(self.scope)
+        self.addCleanup(v.close)
+        got = v.changes()
+        self.assertEqual(got["viz"], {"update_ms": 2000, "live": True})
+
+    def test_an_update_ms_edit_in_this_chat_moves_the_stamp_and_the_value(self):
+        self.chain()
+        v = view.View(self.scope)
+        self.addCleanup(v.close)
+        before = v.changes()
+        self.write(os.path.join(self.scope, "config.json"), '{"update_ms": 750, "live": false}')
+        after = v.changes()
+        self.assertEqual(after["viz"], {"update_ms": 750, "live": False})
+        self.assertNotEqual(before["config"], after["config"])
+
+    def test_the_page_bakes_the_same_dials_as_the_stamp(self):
+        self.chain()
+        v = view.View(self.scope)
+        self.addCleanup(v.close)
+        self.write(os.path.join(self.scope, "config.json"), '{"update_ms": 750, "live": false}')
+        folders = [c["path"] for c in reversed(v.chain_paths())]
+        html = view.page(self.scope, folders).decode("utf-8")
+        self.assertIn('Number("750") || 2000', html)
+        self.assertIn('const LIVE_ON = "0" !== "0";', html)
+        self.assertEqual(v.changes()["viz"], {"update_ms": 750, "live": False})

@@ -39,20 +39,26 @@ from .harness import info as harness_info
 PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "view.html")
 
 
-def page(root=None, layers=()):
-    """The explorer page as bytes, with its poll interval (dial update_ms) and its live switch (dial live).
+def viz_dials(root=None, layers=()):
+    """The viewer's two dials for one namespace: (update_ms, live). Shared by the page (baked in at load) and by the
+    live stamp (api/changes), so a change in any file of the chain reaches the page through the same rule.
 
     layers: the config folders of a namespace (scope), widest first, ending with the scope's own folder (the
     config_layers of the view, resolved through parent). They resolve as a chain: each later file beats the earlier
-    one at each dial, the profile's top level first. With no layers the page reads the store's top level (dials.top)."""
-    with open(PAGE, encoding="utf-8") as f:
-        html = f.read()
+    one at each dial, the profile's top level first. With no layers the store's top level is read (dials.top)."""
+    if not layers:
+        return dials.top(root, "update_ms"), dials.top(root, "live")
     chain = [("profile", {k: v for k, v in dials.config(root).items() if k != "models"} if root else {})]
     chain += [("scope", dials.config(folder)) for folder in layers if folder]
-    if not layers:
-        ms, live = dials.top(root, "update_ms"), dials.top(root, "live")
-    else:
-        ms, live = dials.value(chain, None, "update_ms"), dials.value(chain, None, "live")
+    return dials.value(chain, None, "update_ms"), dials.value(chain, None, "live")
+
+
+def page(root=None, layers=()):
+    """The explorer page as bytes, with its poll interval (dial update_ms) and its live switch (dial live).
+    See viz_dials for how the layers resolve."""
+    with open(PAGE, encoding="utf-8") as f:
+        html = f.read()
+    ms, live = viz_dials(root, layers)
     return html.replace("__UPDATE_MS__", str(ms)).replace("__LIVE__", "1" if live else "0").encode("utf-8")
 HEAT_HALF = 86400.0  # seconds: the glow of a crumb the model opened halves each day
 ACE_LOG = ("ace.log.1", "ace.log")  # oldest first
@@ -1736,12 +1742,25 @@ class View(Reader):
                     out[ref] = ref
         return out
 
+    def chain_paths(self, item=None):
+        """The config folders of a file's chain, widest first (its parent first, the file last). item: a config_layers
+        entry; default: the one that is this chat's ("here"). The page and the live stamp both resolve through this."""
+        layers = self.config_layers()
+        by_id = {it["id"]: it for it in layers}
+        cur = item or next(it for it in layers if it.get("here"))
+        chain, seen = [], set()
+        while cur and cur["id"] not in seen:
+            seen.add(cur["id"])
+            chain.append(cur)
+            cur = by_id.get(cur.get("parent"))
+        return chain
+
     def changes(self):
         """What changed in the data of this view, for the live page: a stamp of this store (index.db and refs), of the
         harness logs of this profile (ace.log, usage.log in the base), and of each config file in this chat's chain (the
         scope's file and its profile's, the files settings resolves here). Files of other profiles and scopes are not
         stamped. A stamp is the file's modification time and size, so nothing is read or parsed; the page reloads only
-        the part that changed."""
+        the part that changed. "viz" is the two viewer dials as the page resolves them (see viz_dials)."""
         def sig(*paths):
             out = []
             for p in paths:
@@ -1752,17 +1771,13 @@ class View(Reader):
                     out.append("-")
             return "|".join(out)
 
-        layers = self.config_layers()
-        by_id = {item["id"]: item for item in layers}
-        item, chain, seen = next(item for item in layers if item.get("here")), [], set()
-        while item and item["id"] not in seen:
-            seen.add(item["id"])
-            chain.append(item)
-            item = by_id.get(item.get("parent"))
+        chain = self.chain_paths()
+        ms, live = viz_dials(self.root, [c["path"] for c in reversed(chain)])
         return {"scope": scopes.scope_id(self.root), "profile": os.path.basename(os.path.dirname(self.base)),
                 "store": sig(os.path.join(self.root, "index.db"), os.path.join(self.root, "refs")),
                 "logs": sig(os.path.join(self.base, "ace.log"), os.path.join(self.base, "usage.log")),
-                "config": {c["id"]: sig(os.path.join(c["path"], "config.json")) for c in chain}}
+                "config": {c["id"]: sig(os.path.join(c["path"], "config.json")) for c in chain},
+                "viz": {"update_ms": int(ms), "live": bool(live)}}
 
     def config_layers(self):
         """The config files that this view may show and change (the port "config_layers" of the harness), each with
@@ -1929,15 +1944,16 @@ def make_server(root, port=8765, host="127.0.0.1"):
             url = urlsplit(self.path)
             q = {k: v[0] for k, v in parse_qs(url.query).items()}
             if url.path in ("/", "/index.html"):
+                # The page resolves the chain of the chosen file (layer=), else of this chat's file: the same chain
+                # the live stamp (api/changes) reads, so the dials baked in here and the stamp agree.
                 layer = q.get("layer")
-                folders = []
                 if layer:
                     by_id = {item["id"]: item for item in view.config_layers()}
                     if layer not in by_id:
                         return self._send(404, "application/json", b'{"error": "unknown config file"}')
-                    item = by_id[layer]
-                    parent = by_id.get(item.get("parent"))
-                    folders = ([parent["path"]] if parent else []) + [item["path"]]
+                    folders = [c["path"] for c in reversed(view.chain_paths(by_id[layer]))]
+                else:
+                    folders = [c["path"] for c in reversed(view.chain_paths())]
                 return self._send(200, "text/html; charset=utf-8", page(root, folders))
             if url.path not in routes:
                 return self._send(404, "application/json", b'{"error": "not found"}')
