@@ -2192,6 +2192,29 @@ function trkGrid() {  // the columns of the charts (fewer in a narrow window) an
   const inner = $("trk").clientWidth - 28, cols = inner >= 960 ? 3 : inner >= 640 ? 2 : 1, col = (inner - (cols - 1) * 10) / cols;
   return {cols, w: n => Math.max(200, Math.floor(Math.min(n, cols) * col + (Math.min(n, cols) - 1) * 10 - 26))};
 }
+// the cache leases drawn as bands behind the context-size lines: each band runs from a lease's first write to its end,
+// placed on the request axis by time (interpolated between the requests either side). Orange: ended by a cache break;
+// grey: expired; blue: still open.
+function leaseBands(s, pts, px, m, H, items) {
+  if (!items.length || !pts.length) return;
+  const at = t => {
+    if (t <= pts[0].ts) return 0;
+    for (let i = 1; i < pts.length; i++) if (t <= pts[i].ts) {
+      const a = pts[i - 1].ts, b = pts[i].ts;
+      return i - 1 + (b > a ? (t - a) / (b - a) : 0);
+    }
+    return pts.length - 1;
+  };
+  const top = m.t, h = H - m.t - m.b;
+  for (const ls of items) {
+    const x0 = px(at(ls.start)), w = Math.max(2, px(at(ls.end)) - x0);
+    const col = ls.why === "rotated" ? TK.fold : ls.why === "open" ? TK.sent : "var(--faint)";
+    const r = sv("rect", {x: x0, y: top, width: w, height: h, rx: 2, fill: col, opacity: .16});
+    r.append(sv("title", {}, `${hms(ls.start)} to ${hms(ls.end)} · ${Math.round(ls.secs)} s · ${ls.why} · ${ls.write_tok.toLocaleString()} tokens written · ${ls.reads} reads`));
+    s.append(r);
+    if (ls.why === "rotated") s.append(sv("line", {x1: x0 + w, x2: x0 + w, y1: top, y2: top + h, stroke: TK.fold, "stroke-width": 1.5, opacity: .8}));
+  }
+}
 // the line: sent, without ACE, the model's count, the target, and a mark on each fold
 function lineChart(d) {
   const pts = d.points, box = panel("w2", "Context size by request", "Tokens in each request. A fold is where the sent size drops.");
@@ -2202,6 +2225,7 @@ function lineChart(d) {
   const s = sv("svg", {viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img",
     "aria-label": `Context size over ${pts.length} requests, ${pts.filter(p => p.act === "fold").length} folds`});
   s.append(axes(W, H, m, ymax, ticks, y));
+  leaseBands(s, pts, px, m, H, (d.leases || {}).items || []);
   for (const i of new Set([0, Math.floor((pts.length - 1) / 2), pts.length - 1]))
     s.append(sv("text", {x: px(i), y: H - 6, "text-anchor": i === 0 ? "start" : i === pts.length - 1 ? "end" : "middle"}, hms(pts[i].ts)));
   const path = (f, v) => pts.map((p, i) => f(p) == null ? null : (i && pts[i - 1] && f(pts[i - 1]) != null ? "L" : "M") + px(i).toFixed(1) + " " + y(v(p)).toFixed(1)).filter(Boolean).join(" ");
@@ -2235,7 +2259,7 @@ function lineChart(d) {
       e.clientX - bx.left, e.clientY - bx.top);
   });
   hit.addEventListener("mouseleave", () => { t.hide(); cross.setAttribute("opacity", 0); dot.setAttribute("opacity", 0); });
-  const keys = [["sent", TK.sent], ["without ACE", TK.raw], ["the model's count", TK.seen], ["target", "var(--faint)"], ["fold", TK.fold, "d"]];
+  const keys = [["sent", TK.sent], ["without ACE", TK.raw], ["the model's count", TK.seen], ["target", "var(--faint)"], ["fold", TK.fold, "d"], ["cache lease", "var(--faint)", ""]];
   if (pts.some(p => p.act === "ratchet")) keys.push(["target raised (ratchet)", TK.fold, "r"]);  // a ring, as on the line
   box.append(keyRow(keys));
   return box;
@@ -2358,32 +2382,6 @@ function tiles(d) {
   add(keeps + folds ? pc(keeps / (keeps + folds)) : "–", "requests that kept the layer");
   return t;
 }
-// the cache leases of the session on a time axis: a bar from a lease's first write to its end (each read runs it on,
-// to last touch + ttl). Orange: a cache break ended it and a new lease began at that request; grey: it expired.
-function leaseChart(d) {
-  const L = d.leases || {items: [], ttl: 300}, items = L.items;
-  const box = panel("w2", "Cache leases", `Each bar is one lease in time, from its first write to its end. It runs on for ${Math.round(L.ttl / 60)} min after its last read.`);
-  const W = trkGrid().w(2), H = 124, m = {l: 44, r: 16, t: 10, b: 24};
-  if (!items.length) { box.append(el("div", "empty", "No cache leases in usage.log for this chat.")); return box; }
-  const ts = [...d.points.map(p => p.ts), ...items.flatMap(l => [l.start, l.end])];
-  const t0 = Math.min(...ts), t1 = Math.max(...ts, t0 + 1), x = t => m.l + (t - t0) / (t1 - t0) * (W - m.l - m.r);
-  const s = sv("svg", {viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img", "aria-label": `${items.length} cache leases`});
-  const base = H - m.b, top = m.t + 6, bh = base - top - 8;
-  s.append(sv("line", {x1: m.l, x2: W - m.r, y1: base, y2: base, stroke: "var(--line)", "stroke-width": 1}));
-  for (const t of [t0, (t0 + t1) / 2, t1])
-    s.append(sv("text", {x: x(t), y: H - 6, "text-anchor": t === t0 ? "start" : t === t1 ? "end" : "middle"}, hms(t)));
-  for (const p of d.points) s.append(sv("circle", {cx: x(p.ts), cy: base - 3, r: 1.6, fill: TK.sent, opacity: .7}));
-  for (const ls of items) {
-    const col = ls.why === "rotated" ? TK.fold : ls.why === "open" ? TK.sent : "var(--faint)";
-    const w = Math.max(2, x(ls.end) - x(ls.start)), when = `${hms(ls.start)} to ${hms(ls.end)} · ${Math.round(ls.secs)} s · ${ls.why}`;
-    const r = sv("rect", {x: x(ls.start), y: top, width: w, height: bh, rx: 2, fill: col, opacity: .5});
-    r.append(sv("title", {}, `${when} · ${ls.write_tok.toLocaleString()} tokens written · ${ls.reads} reads`));
-    s.append(r);
-    if (ls.why === "rotated") s.append(sv("line", {x1: x(ls.end), x2: x(ls.end), y1: top - 4, y2: base, stroke: TK.fold, "stroke-width": 2}));
-  }
-  box.append(s, keyRow([["lease, open", TK.sent, ""], ["ended by a break", TK.fold, ""], ["ended by expiry", "var(--faint)", ""]]));
-  return box;
-}
 function drawTrk(d, note) {
   const box = $("trk"), keep = [box.scrollLeft, box.scrollTop], head = el("div", "tkh"), pills = el("div", "pills");
   for (const [mode, name] of [["selected", "Selected session"], ["current", "Current session"]]) {
@@ -2394,7 +2392,7 @@ function drawTrk(d, note) {
   head.append(el("h4", null, "Context size"), pills, el("span", "sub", d.session ? `${d.session} · ${d.points.length} requests` + (d.session === d.current ? " · the current session" : "") : "ace.log has no request yet"));
   if (note) head.append(el("span", "tkn", note));
   const grid = el("div", "tk c" + trkGrid().cols);
-  grid.append(lineChart(d), leaseChart(d), candleChart(d), pieChart(d), cutChart(d), sessionBars(d));
+  grid.append(lineChart(d), candleChart(d), pieChart(d), cutChart(d), sessionBars(d));
   box.textContent = ""; box.append(head, tiles(d), grid);
   [box.scrollLeft, box.scrollTop] = keep;
   trkLast = [d, note, box.clientWidth];
