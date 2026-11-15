@@ -296,6 +296,23 @@ def usage_requests(root):
     return out
 
 
+LEASE_KEYS = ("id", "up", "lo", "hi", "start", "last", "end", "why", "reads", "tier", "store_usd", "unseen")  # of a lease, for the page
+MARK_KEYS = ("ts", "at", "cr", "cw", "inp", "kind", "read", "wrote", "tier", "store_usd", "read_usd")  # of a request
+
+
+def side_of(row):
+    """The second agent that sent a request (a row of usage_requests), or "" for the chat itself. A harness can run
+    another agent on the session id of a chat (Hermes: the review of a turn). Then usage.log holds that agent's requests
+    under the chat's id, and only the turn id tells them apart: Hermes names a turn <session>:<task>:<n>, and the task of
+    the chat's own turns is the session id. -> the first characters of the other agent's task; "" for a turn id of
+    another form."""
+    sess, turn = row.get("sess") or "", row.get("turn") or ""
+    if not sess or not turn.startswith(sess + ":"):
+        return ""
+    task = turn[len(sess) + 1:].rpartition(":")[0]
+    return "" if not task or task == sess else task[:8]
+
+
 def _state(path, run, connect=None):
     """run(conn) on a read-only connection to a state.db: the port "state" (logview.read of the harness). No harness:
     no state.db."""
@@ -1576,18 +1593,46 @@ class View(Reader):
                 "leases": self.leases_of(hit)}
 
     def leases_of(self, hit):
-        """The cache leases of the session that the size view shows (usage.log, main requests; breadcrumbs/usage.py
-        leases). items: one per lease, oldest first; totals: lease_totals (the money at the price port's rates).
+        """The cache of the session that the size view shows, as leases (usage.log, main requests; breadcrumbs/usage.py
+        leases). items: one per lease in the order written, with LEASE_KEYS and side; marks: one per request in the
+        order that they began, with MARK_KEYS, n (the number of the request in its turn) and side. side: the second
+        agent that sent the request, "" for the chat itself (side_of). ttl: the seconds that a lease of this session
+        lasts after its last read (read off its requests); now: the time of this answer (a lease that ends after it is
+        open); steps: [[prompt size, times]] where the price of the model steps up, and by how much for a cache write;
+        sides: {side: {requests, write_tok, store_usd}}; totals: lease_totals (the money at the price port's rates).
         hit is the session id of ace.log, which may be a prefix of the full id. Reads only."""
+        now = time.time()
         if not hit:
-            return {"ttl": LEASE_TTL, "items": [], "totals": None}
+            return {"ttl": LEASE_TTL, "now": now, "items": [], "marks": [], "steps": [], "sides": {}, "totals": None}
         by = {}
         for r in usage_requests(self.base):
             by.setdefault(r["sess"], []).append(r)
         rows = [r for sid, rs in by.items() if sid.startswith(hit) or hit.startswith(sid) for r in rs]
-        found, orphan = usage_leases(rows, now=time.time())
-        items = [{k: (round(v, 6) if isinstance(v, float) else v) for k, v in ls.items()} for ls in found]
-        return {"ttl": LEASE_TTL, "items": items, "totals": lease_totals(found, orphan)}
+        found, marks, orphan = usage_leases(rows, now=now)
+        by_req = {r["req"]: r for r in rows if r["req"]}
+        # a second agent is told from the chat only where the chat's own turns have the form that side_of reads
+        known = any((r["turn"] or "").startswith("%s:%s:" % (r["sess"], r["sess"])) for r in rows)
+        side = lambda req: side_of(by_req[req]) if known and req in by_req else ""
+        num = lambda x: round(x, 6) if isinstance(x, float) else x
+        items = [dict({k: num(ls[k]) for k in LEASE_KEYS}, side=side(ls["req"])) for ls in found]
+        out, sides = [], {}
+        for mk in marks:
+            row, tag = by_req.get(mk["req"]), side(mk["req"])
+            out.append(dict({k: num(mk[k]) for k in MARK_KEYS}, n=row["n"] if row else 0, side=tag))
+            if tag:
+                s = sides.setdefault(tag, {"requests": 0, "write_tok": 0, "store_usd": 0.0})
+                s["requests"] += 1
+                s["write_tok"] += mk["cw"]
+                s["store_usd"] = round(s["store_usd"] + (mk["store_usd"] or 0.0), 6)
+        steps = {}
+        for at in {(r["model"], r["prov"]) for r in rows if r["task"] == "main"}:
+            price = cache_rates(*at)
+            if isinstance(price, list):
+                for (upto, low), (_, high) in zip(price, price[1:]):
+                    if upto and low[2] > 0:
+                        steps[upto] = round(high[2] / low[2], 2)
+        return {"ttl": found[0]["ttl"] if found else LEASE_TTL, "now": now, "items": items, "marks": out,
+                "steps": sorted(steps.items()), "sides": sides, "totals": lease_totals(found, marks, orphan)}
 
     def evidence(self, sid=None, harness=""):
         """The evidence QR of the harness box: where() as one compact line, cut into codes that each hold what one QR holds (a
