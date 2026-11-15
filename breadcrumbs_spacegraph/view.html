@@ -297,6 +297,7 @@ body:has(#mea.on) #side{z-index:6}
   <label class="tool"><input type="checkbox" id="trkon"><svg class="i" viewBox="0 0 16 16"><path d="M2 13V3M2 13h12M4 10l3-3 2 2 4-5"/></svg>Size</label>
   <label class="tool" title="Measures: numbers by scope, context, family and inclusion, with where each one came from"><input type="checkbox" id="meaon"><svg class="i" viewBox="0 0 16 16"><path d="M3 14V8M7 14V3M11 14V6M15 14V10"/></svg>Measures</label>
   <label class="tool"><input type="checkbox" id="follow"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5"/><path d="M8 1v3M8 12v3M1 8h3M12 8h3"/></svg>Follow the agent</label>
+  <button class="tool" id="rec" title="Record the graph from inception: the map is cleared and built again while the canvas is captured to a video file. Press again to stop."><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="4" fill="currentColor"/><circle cx="8" cy="8" r="6"/></svg>Record</button>
   <div id="lay"></div>
   <div id="agent"></div>
   <div id="find"><svg class="i" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><input id="q" placeholder="Find in memory"></div>
@@ -3761,6 +3762,39 @@ async function liveCheck() {
   }
 }
 setInterval(liveCheck, UPDATE_MS); if (LIVE_ON) liveCheck();
+// Record from inception: the map is cleared and read again from the store while the canvas is captured (MediaRecorder).
+// The recording stops by hand (the button again), or 8 s after the graph is ready, or at 120 s. The webm is saved by the
+// browser through a link in the message line; nothing is sent anywhere.
+let REC = null;
+function recordStop() { if (REC && REC.rec.state !== "inactive") REC.rec.stop(); }
+function recordToggle() {
+  if (REC) { recordStop(); return; }
+  if (!window.MediaRecorder || !cv.captureStream) { msg("This browser cannot record the canvas."); return; }
+  const type = ["video/webm;codecs=vp9", "video/webm"].find(t => MediaRecorder.isTypeSupported(t)) || "";
+  const chunks = [], rec = new MediaRecorder(cv.captureStream(30), type ? {mimeType: type} : {});
+  REC = {rec, t0: Date.now(), readyAt: 0};
+  rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+  rec.onstop = () => {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-"), a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob(chunks, {type: rec.mimeType || "video/webm"}));
+    a.download = "breadcrumbs-graph-" + stamp + ".webm";
+    a.textContent = "Save the recording " + a.download;
+    $("msg").replaceChildren(a);
+    $("rec").classList.remove("on"); REC = null;
+  };
+  $("rec").classList.add("on");
+  nodes.clear(); roots.length = 0; cueEdges.length = 0;  // from inception: nothing drawn, the store is read again
+  GRAPH.state = "idle"; GRAPH.started = true; dirty = true; temp = Math.max(temp, 0.5);
+  rec.start(500);
+  if (layout === "calendar") calLoad(); else loadGraph();
+  msg("Recording the graph from inception. Press Record again to stop.");
+}
+$("rec").onclick = recordToggle;
+setInterval(() => {  // the auto stops: 120 s, and 8 s after the graph is ready
+  if (!REC) return;
+  if (GRAPH.state === "ready" && !REC.readyAt) REC.readyAt = Date.now();
+  if (Date.now() - REC.t0 > 120000 || (REC.readyAt && Date.now() - REC.readyAt > 8000)) recordStop();
+}, 500);
 const start = HASH.get("focus");
 if (start) setTimeout(() => revealId(start), 600);
 requestAnimationFrame(frame);
