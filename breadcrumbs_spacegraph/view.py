@@ -38,13 +38,21 @@ from .harness import info as harness_info
 PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "view.html")
 
 
-def page(root=None):
-    """The explorer page as bytes, with its poll interval from the dial update_ms of the store at root (dials.top), and
-    whether it checks for changes from the dial live (dials.top)."""
+def page(root=None, layers=()):
+    """The explorer page as bytes, with its poll interval (dial update_ms) and its live switch (dial live).
+
+    layers: the config folders of a namespace (scope), widest first, ending with the scope's own folder (the
+    config_layers of the view, resolved through parent). They resolve as a chain: each later file beats the earlier
+    one at each dial, the profile's top level first. With no layers the page reads the store's top level (dials.top)."""
     with open(PAGE, encoding="utf-8") as f:
         html = f.read()
-    ms = dials.top(root, "update_ms")
-    return html.replace("__UPDATE_MS__", str(ms)).replace("__LIVE__", "1" if dials.top(root, "live") else "0").encode("utf-8")
+    chain = [("profile", {k: v for k, v in dials.config(root).items() if k != "models"} if root else {})]
+    chain += [("scope", dials.config(folder)) for folder in layers if folder]
+    if not layers:
+        ms, live = dials.top(root, "update_ms"), dials.top(root, "live")
+    else:
+        ms, live = dials.value(chain, None, "update_ms"), dials.value(chain, None, "live")
+    return html.replace("__UPDATE_MS__", str(ms)).replace("__LIVE__", "1" if live else "0").encode("utf-8")
 HEAT_HALF = 86400.0  # seconds: the glow of a crumb the model opened halves each day
 ACE_LOG = ("ace.log.1", "ace.log")  # oldest first
 ACE_KV = re.compile(r"(\w+)=(\S+)")
@@ -1900,7 +1908,16 @@ def make_server(root, port=8765, host="127.0.0.1"):
             url = urlsplit(self.path)
             q = {k: v[0] for k, v in parse_qs(url.query).items()}
             if url.path in ("/", "/index.html"):
-                return self._send(200, "text/html; charset=utf-8", page(root))
+                layer = q.get("layer")
+                folders = []
+                if layer:
+                    by_id = {item["id"]: item for item in view.config_layers()}
+                    if layer not in by_id:
+                        return self._send(404, "application/json", b'{"error": "unknown config file"}')
+                    item = by_id[layer]
+                    parent = by_id.get(item.get("parent"))
+                    folders = ([parent["path"]] if parent else []) + [item["path"]]
+                return self._send(200, "text/html; charset=utf-8", page(root, folders))
             if url.path not in routes:
                 return self._send(404, "application/json", b'{"error": "not found"}')
             if not hmac.compare_digest(q.get("k", ""), key):
