@@ -2358,6 +2358,32 @@ function tiles(d) {
   add(keeps + folds ? pc(keeps / (keeps + folds)) : "–", "requests that kept the layer");
   return t;
 }
+// the cache leases of the session on a time axis: a bar from a lease's first write to its end (each read runs it on,
+// to last touch + ttl). Orange: a cache break ended it and a new lease began at that request; grey: it expired.
+function leaseChart(d) {
+  const L = d.leases || {items: [], ttl: 300}, items = L.items;
+  const box = panel("w2", "Cache leases", `Each bar is one lease in time, from its first write to its end. It runs on for ${Math.round(L.ttl / 60)} min after its last read.`);
+  const W = trkGrid().w(2), H = 124, m = {l: 44, r: 16, t: 10, b: 24};
+  if (!items.length) { box.append(el("div", "empty", "No cache leases in usage.log for this chat.")); return box; }
+  const ts = [...d.points.map(p => p.ts), ...items.flatMap(l => [l.start, l.end])];
+  const t0 = Math.min(...ts), t1 = Math.max(...ts, t0 + 1), x = t => m.l + (t - t0) / (t1 - t0) * (W - m.l - m.r);
+  const s = sv("svg", {viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img", "aria-label": `${items.length} cache leases`});
+  const base = H - m.b, top = m.t + 6, bh = base - top - 8;
+  s.append(sv("line", {x1: m.l, x2: W - m.r, y1: base, y2: base, stroke: "var(--line)", "stroke-width": 1}));
+  for (const t of [t0, (t0 + t1) / 2, t1])
+    s.append(sv("text", {x: x(t), y: H - 6, "text-anchor": t === t0 ? "start" : t === t1 ? "end" : "middle"}, hms(t)));
+  for (const p of d.points) s.append(sv("circle", {cx: x(p.ts), cy: base - 3, r: 1.6, fill: TK.sent, opacity: .7}));
+  for (const ls of items) {
+    const col = ls.why === "rotated" ? TK.fold : ls.why === "open" ? TK.sent : "var(--faint)";
+    const w = Math.max(2, x(ls.end) - x(ls.start)), when = `${hms(ls.start)} to ${hms(ls.end)} · ${Math.round(ls.secs)} s · ${ls.why}`;
+    const r = sv("rect", {x: x(ls.start), y: top, width: w, height: bh, rx: 2, fill: col, opacity: .5});
+    r.append(sv("title", {}, `${when} · ${ls.write_tok.toLocaleString()} tokens written · ${ls.reads} reads`));
+    s.append(r);
+    if (ls.why === "rotated") s.append(sv("line", {x1: x(ls.end), x2: x(ls.end), y1: top - 4, y2: base, stroke: TK.fold, "stroke-width": 2}));
+  }
+  box.append(s, keyRow([["lease, open", TK.sent, ""], ["ended by a break", TK.fold, ""], ["ended by expiry", "var(--faint)", ""]]));
+  return box;
+}
 function drawTrk(d, note) {
   const box = $("trk"), keep = [box.scrollLeft, box.scrollTop], head = el("div", "tkh"), pills = el("div", "pills");
   for (const [mode, name] of [["selected", "Selected session"], ["current", "Current session"]]) {
@@ -2368,12 +2394,12 @@ function drawTrk(d, note) {
   head.append(el("h4", null, "Context size"), pills, el("span", "sub", d.session ? `${d.session} · ${d.points.length} requests` + (d.session === d.current ? " · the current session" : "") : "ace.log has no request yet"));
   if (note) head.append(el("span", "tkn", note));
   const grid = el("div", "tk c" + trkGrid().cols);
-  grid.append(lineChart(d), candleChart(d), pieChart(d), cutChart(d), sessionBars(d));
+  grid.append(lineChart(d), leaseChart(d), candleChart(d), pieChart(d), cutChart(d), sessionBars(d));
   box.textContent = ""; box.append(head, tiles(d), grid);
   [box.scrollLeft, box.scrollTop] = keep;
   trkLast = [d, note, box.clientWidth];
 }
-const trkKeyOf = (d, note) => { const p = d.points[d.points.length - 1]; return [d.session, d.points.length, p ? p.ts : 0, d.all.requests, $("trk").clientWidth, trkMode, note].join(":"); };
+const trkKeyOf = (d, note) => { const p = d.points[d.points.length - 1], T = (d.leases || {}).totals; return [d.session, d.points.length, p ? p.ts : 0, d.all.requests, T ? T.n + "/" + T.reads : "", $("trk").clientWidth, trkMode, note].join(":"); };
 function trkFit() {  // the window changed size: draw the last data again at the new width now (the 2 s timer would lag)
   if (!$("trkon").checked || !trkLast || $("trk").clientWidth === trkLast[2]) return;
   trkKey = trkKeyOf(trkLast[0], trkLast[1]); drawTrk(trkLast[0], trkLast[1]);
@@ -2432,9 +2458,10 @@ const MEA_UNITS = [
   ["event", "Event", "The context events of the chat in focus: recall, find, open, compress. Click a chat row first."]];
 const MEA_GROUP = {db: "state.db · one number for each chat", cost: "cost · state.db session_model_usage, by model and task",
   usage: "usage.log · one number for each request", ace: "ace.log · ACE, one number for each request",
+  cache_cost: "cache cost · usage.log, priced at the price port (store, read, and the same tokens uncached)",
   rcpt: "receipts · what the context events put in", store: "the store · the size of crumbs"};
 const MEA_WHY = {db: "no state.db beside this store", cost: "no state.db beside this store", usage: "no usage.log yet",
-  ace: "no ace.log yet", rcpt: "no receipts in this store", store: "no chats in this store"};
+  ace: "no ace.log yet", rcpt: "no receipts in this store", store: "no chats in this store", cache_cost: "no usage.log yet"};
 const MEA_FIRST = ["cost_usd", "u_prompt", "in_tok", "ace_sent", "ctx_bytes", "size"];  // the measure to show when none is chosen
 const MEA_MODELS = ["#f6c177", "#4fd1c5", "#c39bd3", "#f38ba8", "#8bd17c", "#7aa2ff", "#fab387", "#e5c07b", "#56b6c2", "#d19a66"];
 const MEA_LUT = Array.from({length: 48}, (_, i) => { const t = i / 47; return `hsl(214,${Math.round(52 + 38 * t)}%,${Math.round(15 + 52 * t)}%)`; });

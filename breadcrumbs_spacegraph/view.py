@@ -29,8 +29,9 @@ from breadcrumbs.ingest import leaves
 from breadcrumbs.lines import decode_spine
 from breadcrumbs.metrics import metric
 from breadcrumbs.reader import Reader, Trail  # Trail: tests/test_view.py and hermes.py read view.Trail
-from breadcrumbs.usage import AFTER, AFTER_KEYS, CACHE, KEYS as CACHE_KEYS, after as after_values, rank as act_rank, \
+from breadcrumbs.usage import AFTER, AFTER_KEYS, CACHE, COST_KEYS, KEYS as CACHE_KEYS, after as after_values, rank as act_rank, \
     rates as cache_rates, values as cache_values
+from breadcrumbs.usage import LEASE_TTL, leases as usage_leases, lease_totals
 from breadcrumbs.zoom import CUED, GAP, Zoom, parse_ref  # Zoom: tests/test_view.py reads view.Zoom
 
 from .harness import info as harness_info
@@ -947,7 +948,8 @@ class _Measures:
         wanted = [m for m in CACHE_KEYS if m in self.want]
         if not wanted or not rows or self.unit not in ("time", "request"):
             return acc
-        for r, vals in zip(rows, cache_values(rows, cache_rates if "cache_saved_usd" in wanted else None)):
+        usd_wanted = any(m in self.want for m in ("cache_saved_usd",) + COST_KEYS)
+        for r, vals in zip(rows, cache_values(rows, cache_rates if usd_wanted else None)):
             self.put_request(acc, sid, r, vals, wanted)
         return acc
 
@@ -1279,6 +1281,7 @@ class _Measures:
                       if self.num(v, k[1]) is not None or self.agg[k[1]] != "ratio"]
         lines = self.build_lines() if self.want_lines and self.focus else None
         has = {"db": self.db is not None, "cost": self.db is not None, "usage": bool(self.use_by), "ace": bool(self.ace_by),
+               "cache_cost": bool(self.use_by),
                "rcpt": any(self.events_of(s["sid"]) for s in self.S.values() if s["ref"]),
                "store": any(s["ref"] for s in self.S.values())}
         return {"unit": self.unit, "bucket": self.kind if self.unit == "time" else "", "focus": self.focus,
@@ -1563,7 +1566,22 @@ class View(Reader):
                                                    key=len, default="") if want else newest
             pts = series.get(hit, [])
             return {"current": newest, "session": hit, "target": next((p["target"] for p in reversed(pts) if p["target"]), None),
-                    "points": pts, "candles": ace_candles(pts, per), "mix": ace_mix(pts), "all": ace_totals(series)}
+                    "points": pts, "candles": ace_candles(pts, per), "mix": ace_mix(pts), "all": ace_totals(series),
+                "leases": self.leases_of(hit)}
+
+    def leases_of(self, hit):
+        """The cache leases of the session that the size view shows (usage.log, main requests; breadcrumbs/usage.py
+        leases). items: one per lease, oldest first; totals: lease_totals (the money at the price port's rates).
+        hit is the session id of ace.log, which may be a prefix of the full id. Reads only."""
+        if not hit:
+            return {"ttl": LEASE_TTL, "items": [], "totals": None}
+        by = {}
+        for r in usage_requests(self.base):
+            by.setdefault(r["sess"], []).append(r)
+        rows = [r for sid, rs in by.items() if sid.startswith(hit) or hit.startswith(sid) for r in rs]
+        found, orphan = usage_leases(rows, now=time.time())
+        items = [{k: (round(v, 6) if isinstance(v, float) else v) for k, v in ls.items()} for ls in found]
+        return {"ttl": LEASE_TTL, "items": items, "totals": lease_totals(found, orphan)}
 
     def evidence(self, sid=None, harness=""):
         """The evidence QR of the harness box: where() as one compact line, cut into codes that each hold what one QR holds (a
