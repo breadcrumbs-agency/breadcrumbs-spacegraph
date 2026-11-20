@@ -53,15 +53,44 @@ class Settings(unittest.TestCase):
         self.addCleanup(current.close)
         got = current.settings("add", {"target": "catalog", "id": "anthropic/claude-haiku-5-5",
                                         "settings": {"ace_tokens": 90000}})
-        self.assertEqual([e["id"] for e in got["catalog"]["entries"]], ["anthropic/claude-haiku-5-5"])
+        mine = lambda g: [e["id"] for e in g["catalog"]["entries"] if not e["builtin"]]  # noqa: E731
+        self.assertEqual(mine(got), ["anthropic/claude-haiku-5-5"])
+        self.assertIn("*/*haiku-5[.-]5*", [e["id"] for e in got["catalog"]["entries"] if e["builtin"]])  # the example
         got = current.settings("clone", {"target": "catalog", "id": "anthropic/claude-haiku-5-5", "to": "nous"})
-        self.assertEqual([e["id"] for e in got["catalog"]["entries"]],
-                         ["anthropic/claude-haiku-5-5", "nous/claude-haiku-5-5"])
+        self.assertEqual(mine(got), ["anthropic/claude-haiku-5-5", "nous/claude-haiku-5-5"])
         # a plain read lists the entries, and the dials of the file are not touched
-        self.assertEqual(len(current.settings("get", {})["catalog"]["entries"]), 2)
+        self.assertEqual(len(mine(current.settings("get", {}))), 2)
         self.assertIn("nous/claude-haiku-5-5", current.settings("get", {})["common"]["catalog"])
         with self.assertRaises(ValueError):
             current.settings("add", {"target": "catalog", "id": "anthropic/x", "settings": {"ace_tokens": -1}})
+
+    def test_groups_are_their_own_target_and_a_chain_has_more_than_two_files(self):
+        base = os.path.join(self.root, "inherit")
+        folders = {n: os.path.join(base, n) for n in ("default", "group", "profile")}
+        for n, cfg in (("default", {"ace_tokens": 300000, "neighbor": 0.2}), ("group", {"ace_tokens": 200000}), ("profile", {})):
+            os.makedirs(folders[n])
+            with open(os.path.join(folders[n], "config.json"), "w") as f:
+                json.dump(cfg, f)
+        calls = []
+        layers = [{"id": "profile:default", "kind": "profile", "label": "d", "path": folders["default"], "parent": None, "here": True},
+                  {"id": "group:perf", "kind": "group", "label": "g", "path": folders["group"], "parent": "profile:default"},
+                  {"id": "profile:a", "kind": "profile", "label": "a", "path": folders["profile"], "parent": "group:perf"}]
+        ports.give("config_layers", lambda root: [dict(x) for x in layers])
+        ports.give("groups", lambda root, action, payload: calls.append((action, (payload or {}).get("name"))) or {"groups": [], "ungrouped": ["a"]})
+        self.addCleanup(lambda: ports._given.pop("config_layers", None))
+        self.addCleanup(lambda: ports._given.pop("groups", None))
+        current = view.View(self.root)
+        self.addCleanup(current.close)
+        got = current.settings("get", {"layer": "profile:a"})
+        rows = {r["key"]: r for g in got["common"]["groups"] for r in g["rows"]}
+        self.assertEqual((rows["ace_tokens"]["value"], rows["neighbor"]["value"]), (200000, 0.2))  # group over default
+        self.assertEqual([c["label"] for c in got["common"]["chain"]], ["profile", "group", "profile"])
+        self.assertEqual(got["groups"]["ungrouped"], ["a"])
+        got = current.settings("create", {"target": "groups", "name": "perf", "layer": "profile:a"})
+        self.assertEqual(calls[-1], ("create", "perf"))
+        self.assertNotIn("ace_tokens", open(os.path.join(folders["profile"], "config.json")).read())  # nothing written to a config
+        grp = current.settings("get", {"layer": "group:perf"})
+        self.assertIsNone(grp["harness"])  # a group has no Hermes settings of its own
 
     def test_authenticated_http_mutation_changes_only_the_common_dial(self):
         server = view.make_server(self.root, port=0)

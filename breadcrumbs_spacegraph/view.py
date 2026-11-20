@@ -1853,10 +1853,16 @@ class View(Reader):
             raise ValueError("unknown config file: %s" % layer_id)
         layer = by_id[layer_id]
         parent = by_id.get(layer.get("parent"))
-        chain = ([(parent["kind"], parent["path"])] if parent else []) + [(layer["kind"], layer["path"])]
+        chain = [(item["kind"], item["path"]) for item in reversed(self.chain_paths(layer))]  # the widest file first
         folder = layer["path"]
         entries = None
-        if target == "catalog":  # the model dictionary of this file (catalog.py): its own actions
+        groups = None
+        if target == "groups":  # the groups of profiles (the harness's port): what they share, and who is in them
+            port = ports.get("groups")
+            if not port:
+                raise ValueError("this harness has no groups of profiles")
+            groups = port(self.root, action, payload)
+        elif target == "catalog":  # the model dictionary of this file (catalog.py): its own actions
             entries = catalog.apply(folder, action, payload)
         elif target == "common" and action == "set":
             dials.set_setting(folder, payload.get("key"), payload.get("value"), model)
@@ -1864,7 +1870,7 @@ class View(Reader):
             dials.delete_setting(folder, payload.get("key"), model)
         elif target == "common" and action == "reset":
             dials.reset_settings(folder, model, bool(payload.get("all_models")))
-        elif action != "get" and target != "harness":
+        elif action != "get" and target not in ("harness", "groups"):
             raise ValueError("unknown settings action: %s" % action)
         common = dials.settings_chain(chain, model, environ={})
 
@@ -1874,14 +1880,17 @@ class View(Reader):
         custom = entry.get("settings") if entry else None
         # The harness section belongs to the profile of the chosen file (its parent for a scope), not to the store
         # that this view happens to show.
-        owner = (parent or layer)["path"]
+        owner = (parent if layer["kind"] == "scope" else layer)["path"]  # a group has no Hermes settings of its own
         # A common-dial mutation must never be forwarded as a harness setting
         # mutation.  The widget needs the current harness section in the same
         # response, so read it while the common target is being edited.
+        if layer["kind"] == "group":
+            custom = None
         harness = (custom(owner, action, payload) if custom and target == "harness"
                    else custom(owner, "get", payload) if custom else None)  # ports.settings(root, action, payload)
         return {"common": common, "harness": harness, "harness_key": here, "layer": layer_id,
                 "catalog": entries or {"entries": catalog.rows(dials.config(folder))},
+                "groups": groups if groups is not None else (ports.get("groups") or (lambda *a: None))(self.root, "get", {}),
                 "layers": [dict({k: item.get(k) for k in ("id", "kind", "label", "parent", "applies", "here", "exists",
                                                           "profile")}, path=os.path.join(item["path"], "config.json"))
                            for item in layers]}
