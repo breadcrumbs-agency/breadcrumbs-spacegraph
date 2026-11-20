@@ -48,6 +48,21 @@ class Settings(unittest.TestCase):
         current.settings("set", {"target": "harness", "key": "custom", "value": True, "harness": "fake"})
         self.assertEqual(seen[-1], ("set", "custom"))
 
+    def test_the_model_dictionary_is_its_own_target(self):
+        current = view.View(self.root)
+        self.addCleanup(current.close)
+        got = current.settings("add", {"target": "catalog", "id": "anthropic/claude-haiku-5-5",
+                                        "settings": {"ace_tokens": 90000}})
+        self.assertEqual([e["id"] for e in got["catalog"]["entries"]], ["anthropic/claude-haiku-5-5"])
+        got = current.settings("clone", {"target": "catalog", "id": "anthropic/claude-haiku-5-5", "to": "nous"})
+        self.assertEqual([e["id"] for e in got["catalog"]["entries"]],
+                         ["anthropic/claude-haiku-5-5", "nous/claude-haiku-5-5"])
+        # a plain read lists the entries, and the dials of the file are not touched
+        self.assertEqual(len(current.settings("get", {})["catalog"]["entries"]), 2)
+        self.assertIn("nous/claude-haiku-5-5", current.settings("get", {})["common"]["catalog"])
+        with self.assertRaises(ValueError):
+            current.settings("add", {"target": "catalog", "id": "anthropic/x", "settings": {"ace_tokens": -1}})
+
     def test_authenticated_http_mutation_changes_only_the_common_dial(self):
         server = view.make_server(self.root, port=0)
         threading.Thread(target=server.serve_forever, daemon=True).start()

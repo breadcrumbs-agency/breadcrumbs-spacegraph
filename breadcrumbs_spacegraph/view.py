@@ -21,7 +21,7 @@ from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from breadcrumbs import dials, metrics, ports, scope as scopes, statedb
+from breadcrumbs import catalog, dials, metrics, ports, scope as scopes, statedb
 from breadcrumbs.crumbs import Crumb, is_crumb
 from breadcrumbs.history import _ref_name
 from breadcrumbs.index import cue_edges
@@ -1855,7 +1855,10 @@ class View(Reader):
         parent = by_id.get(layer.get("parent"))
         chain = ([(parent["kind"], parent["path"])] if parent else []) + [(layer["kind"], layer["path"])]
         folder = layer["path"]
-        if target == "common" and action == "set":
+        entries = None
+        if target == "catalog":  # the model dictionary of this file (catalog.py): its own actions
+            entries = catalog.apply(folder, action, payload)
+        elif target == "common" and action == "set":
             dials.set_setting(folder, payload.get("key"), payload.get("value"), model)
         elif target == "common" and action == "delete":
             dials.delete_setting(folder, payload.get("key"), model)
@@ -1878,6 +1881,7 @@ class View(Reader):
         harness = (custom(owner, action, payload) if custom and target == "harness"
                    else custom(owner, "get", payload) if custom else None)  # ports.settings(root, action, payload)
         return {"common": common, "harness": harness, "harness_key": here, "layer": layer_id,
+                "catalog": entries or {"entries": catalog.rows(dials.config(folder))},
                 "layers": [dict({k: item.get(k) for k in ("id", "kind", "label", "parent", "applies", "here", "exists",
                                                           "profile")}, path=os.path.join(item["path"], "config.json"))
                            for item in layers]}
