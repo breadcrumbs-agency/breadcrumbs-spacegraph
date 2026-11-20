@@ -52,7 +52,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 #settings-panel .settings-actions{display:flex;gap:6px;margin-left:auto}
 #settings-panel .settings-group{margin:12px 0 16px}
 #settings-panel .settings-group h4{margin:0 0 4px;font-size:11px;color:var(--dim);letter-spacing:.07em;text-transform:uppercase}
-#settings-panel .settings-row{display:grid;grid-template-columns:minmax(150px,1fr) 180px minmax(110px,1.7fr) minmax(70px,auto) auto auto;align-items:center;gap:8px;padding:7px 0;border-top:1px solid rgba(255,255,255,.05)}
+#settings-panel .settings-row{display:grid;grid-template-columns:minmax(150px,1fr) 180px minmax(110px,1.7fr) minmax(70px,auto);align-items:center;gap:8px;padding:7px 0;border-top:1px solid rgba(255,255,255,.05)}
 #settings-panel .settings-row .name{font:12px var(--mono)}
 #settings-panel .dialbox{display:flex;align-items:center;gap:6px}
 #settings-panel .dialbox input[type=range]{flex:1;min-width:70px;height:20px;padding:0;accent-color:var(--accent)}
@@ -63,7 +63,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 #settings-panel input.switch:checked::after{left:21px}
 #settings-panel .settings-row .doc{color:var(--dim);font-size:11px;line-height:1.3}
 #settings-panel .settings-row .source{color:var(--faint);font-size:10px;white-space:nowrap}
-#settings-panel .settings-row .btn{height:25px;padding:0 8px;font-size:11px}
+#settings-panel .settings-row.dirty{box-shadow:inset 2px 0 0 var(--accent,#e8a33d)}
 #settings-panel .settings-harness{margin:0 0 18px;padding-bottom:10px;border-bottom:1px solid var(--line)}
 #settings-panel .settings-empty{color:var(--dim);font-size:11.5px;padding:5px 0}
 #settings-panel .settings-error{color:#f38ba8;font-size:11.5px;margin:5px 0}
@@ -294,7 +294,8 @@ body:has(#mea.on) #side{z-index:6}
     <label>Model <input id="settings-model" placeholder="profile-wide"></label>
     <div class="settings-actions">
       <button class="btn" id="settings-reload">Reload</button>
-      <button class="btn" id="settings-reset">Revert selected overrides</button>
+      <button class="btn" id="settings-save" disabled title="Write the changed values to the model entry named in Model, or to the default when Model is empty">Save</button>
+      <button class="btn" id="settings-reset" title="Remove the saved values of the model entry named in Model, or of the default when Model is empty">Revert</button>
       <button class="btn" id="settings-reset-all">Reset all dials</button>
     </div>
   </div>
@@ -393,6 +394,7 @@ function showHarness(r) {
 }
 // -- settings: the common dials and the active harness's own controls share one CRUD widget, but never one storage layer.
 let settingsRequest = 0;
+const PENDING = new Map();  // edited rows not yet saved: the one Save writes them all
 let settingsLayer = "";  // the id of the config file the widget shows (view.config_layers); "" is this memory's own
 // The config files that the harness names (a profile's, each scope's), grouped by profile, with the chats that read each.
 function renderLayers(answer) {
@@ -415,7 +417,7 @@ function renderLayers(answer) {
   $("settings-applies").textContent = l ? "Applies to " + l.applies + ". File: " + l.path : "";
 }
 function apiWrite(action, target, key, value) {
-  const body = {action, target, harness: HARNESS.key || "", layer: settingsLayer};
+  const body = {action, target, harness: HARNESS.key || "", layer: settingsLayer, model: target === "common" ? $("settings-model").value.trim() : ""};
   if (key) body.key = key;
   if (value !== undefined) body.value = value;
   return fetch("api/settings?" + new URLSearchParams({k: KEY, h: HARNESS.key || ""}), {
@@ -467,15 +469,9 @@ function settingRow(field, target, model) {
   const control = settingControl(field);
   const doc = document.createElement("span"); doc.className = "doc"; doc.textContent = field.doc || "";
   const source = document.createElement("span"); source.className = "source"; source.textContent = field.source || "default";
-  const save = settingsButton("Save", async () => {
-    try { await apiWrite("set", target, field.key, settingValue(field, control)); await loadSettings(); }
-    catch (e) { setSettingsStatus(e.message, true); }
-  });
-  const revert = settingsButton("Revert", async () => {
-    try { await apiWrite("delete", target, field.key); await loadSettings(); }
-    catch (e) { setSettingsStatus(e.message, true); }
-  }, !field.overridden);
-  row.append(name, control._wrap || control, doc, source, save, revert);
+  const mark = () => { PENDING.set(target + "\u0000" + field.key, {target, field, control}); row.classList.add("dirty"); $("settings-save").disabled = false; };
+  control.addEventListener("input", mark); control.addEventListener("change", mark);
+  row.append(name, control._wrap || control, doc, source);
   return row;
 }
 function settingsGroup(title, fields, target, model) {
@@ -489,6 +485,7 @@ function setSettingsStatus(text, error = false) {
 }
 function renderSettings(answer) {
   const common = answer.common || {}, model = common.model || "";
+  PENDING.clear(); $("settings-save").disabled = true;
   const commonBox = $("settings-common"); commonBox.replaceChildren();
   const title = document.createElement("div"); title.className = "settings-note";
   title.textContent = "Common dials · " + (common.path || "breadcrumbs/config.json") + (model ? " · model " + model : " · profile-wide") + ((common.chain || []).length > 1 ? " · read after " + common.chain[0].path : "") + " · the environment of a running chat (BREADCRUMBS_*) wins over every file"; commonBox.append(title);
@@ -527,6 +524,12 @@ $("settings-close").addEventListener("click", () => { $("settings-panel").hidden
 $("settings-reload").addEventListener("click", loadSettings);
 $("settings-model").addEventListener("change", loadSettings);
 $("settings-layer").addEventListener("change", () => { settingsLayer = $("settings-layer").value; loadSettings(); });
+$("settings-save").addEventListener("click", async () => {  // one Save: every edited row, to the model entry (Model filled) or the default
+  try {
+    for (const {target, field, control} of [...PENDING.values()]) await apiWrite("set", target, field.key, settingValue(field, control));
+    await loadSettings();
+  } catch (e) { setSettingsStatus(e.message, true); }
+});
 $("settings-reset").addEventListener("click", async () => {
   try { await apiWrite("reset", "common", null, undefined); await loadSettings(); }
   catch (e) { setSettingsStatus(e.message, true); }
