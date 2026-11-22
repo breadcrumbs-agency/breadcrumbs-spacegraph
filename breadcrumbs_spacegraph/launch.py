@@ -24,6 +24,7 @@ How each app starts, from its makers:
 """
 import errno
 import http.client
+import json
 import os
 import shlex
 import socket
@@ -57,20 +58,21 @@ def is_mac():
     return sys.platform == "darwin"
 
 
-def term_argv(home, harness=None):
+def term_argv(home, harness=None, disclose=None):
     """`term` on home, found by Python wherever the window starts (a new window has another working folder).
-    harness: the program that opens it; the new process gets it as BREADCRUMBS_HARNESS (the icon beside the brand)."""
+    harness: the program that opens it; the new process gets it as BREADCRUMBS_HARNESS (the icon beside the brand).
+    disclose: the level of the picture (1 to 3; `term` takes no input, so it cannot confirm 4)."""
     named = hint(harness)
     return ["env", "PYTHONPATH=" + ports.pythonpath(os.environ.get("PYTHONPATH"))] + (["BREADCRUMBS_HARNESS=" + named] if named else []) \
-        + [sys.executable, "-m", "breadcrumbs", "--home", home, "term"]
+        + [sys.executable, "-m", "breadcrumbs", "--home", home, "term"] + (["--disclose", str(min(3, int(disclose)))] if disclose else [])
 
 
-def window_argv(app, home):
+def window_argv(app, home, disclose=None):
     """The command line that opens a new window of app that runs `term` on home."""
     a = APPS[app]
     if is_mac():
-        return ["open", "-na", a["mac"], "--args", *a["flag"], *term_argv(home)]
-    return [a["bin"], *a["flag"], *term_argv(home)]
+        return ["open", "-na", a["mac"], "--args", *a["flag"], *term_argv(home, disclose=disclose)]
+    return [a["bin"], *a["flag"], *term_argv(home, disclose=disclose)]
 
 
 def missing(app, err):
@@ -86,8 +88,8 @@ def failed(app, why, err):
     return 1
 
 
-def open_window(app, home, show, out, err):
-    argv = window_argv(app, home)
+def open_window(app, home, show, out, err, disclose=None):
+    argv = window_argv(app, home, disclose)
     if show:
         print(shlex.join(argv), file=out)
         return 0
@@ -172,7 +174,18 @@ def answers(port, home):
         return False
 
 
-def open_web(home, port, show, out, err):
+def ceiling_of(port, home):
+    """The disclosure ceiling of the server on 127.0.0.1:port that serves this home, or None (no answer, an older server)."""
+    try:
+        with open(os.path.join(home, "view.token"), encoding="utf-8") as f:
+            key = f.read().strip()
+        with urllib.request.urlopen("http://127.0.0.1:%d/api/disclosure?k=%s" % (port, key), timeout=2) as r:
+            return int(json.loads(r.read())["ceiling"])
+    except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException):
+        return None
+
+
+def open_web(home, port, show, out, err, disclose=None):
     wanted = PORT if port is None else port
     if show:
         print("webbrowser.open http://127.0.0.1:%d/  (the default browser; the token is added after the address "
@@ -182,11 +195,17 @@ def open_web(home, port, show, out, err):
     try:
         if not answers(wanted, home):
             try:
-                server = view.make_server(home, port=wanted)
+                server = view.make_server(home, port=wanted, disclose=disclose)
             except OSError as e:
                 if e.errno != errno.EADDRINUSE or port is not None:
                     raise
-                server = view.make_server(home, port=0)  # the default port is taken: any free port
+                server = view.make_server(home, port=0, disclose=disclose)  # the default port is taken: any free port
+        elif disclose is not None:  # a server that runs keeps the ceiling that it started with: say so, do not pretend
+            has = ceiling_of(wanted, home)
+            if has != disclose:
+                print("breadcrumbs: the server on port %d was started with %s; --disclose %d has no effect on it. Stop that "
+                      "server (Ctrl-C where it runs) and run this again, or give another --port."
+                      % (wanted, "a ceiling of %d" % has if has else "no disclosure gate (older code)", disclose), file=err)
         key = view.token(home)
     except FileNotFoundError:
         print("breadcrumbs: no store at %s" % home, file=err)
@@ -213,10 +232,11 @@ def open_web(home, port, show, out, err):
     return 0
 
 
-def run(where, home, port=None, show=False, out=None, err=None):
-    """The `open` command. 0: done. 2: an app or Chrome is not there. 1: another failure."""
+def run(where, home, port=None, show=False, out=None, err=None, disclose=None):
+    """The `open` command. 0: done. 2: an app or Chrome is not there. 1: another failure. disclose: the ceiling of the
+    server that it starts (disclosure.py); a window of Kitty or Ghostty runs `term`, which shows 3 at most."""
     out, err = out or sys.stdout, err or sys.stderr
     home = os.path.abspath(os.path.expanduser(home))
     if where in APPS:
-        return open_window(where, home, show, out, err)
-    return open_web(home, port, show, out, err)
+        return open_window(where, home, show, out, err, disclose)
+    return open_web(home, port, show, out, err, disclose)

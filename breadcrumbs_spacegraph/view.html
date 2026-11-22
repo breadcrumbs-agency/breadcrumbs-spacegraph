@@ -1,5 +1,5 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><title>breadcrumbs</title>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>breadcrumbs</title>
 <style>
 :root{color-scheme:dark;--bg:#0b0b0d;--fg:#e6e6ea;--dim:#8a8a94;--accent:#5b9cff;
   --panel:#111114;--card:#151519;--line:#24242a;--line2:#34343c;--faint:#55555f;
@@ -86,6 +86,55 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 #settings-panel .settings-status{color:#8bd5ca;font-size:11px;min-height:16px;margin:4px 0}
 @media (max-width:900px){#settings-panel .settings-row{grid-template-columns:1fr 150px minmax(70px,auto) auto auto}.settings-row .doc{display:none}}
 #harness img{width:20px;height:20px;border-radius:6px;display:block}
+#disclose[hidden]{display:none}
+#disclose{border-color:var(--line2);margin-right:6px}
+#disclose small{font-size:11px;color:var(--dim)}
+#disclose.l1{color:var(--dim)}
+#disclose.l3{color:var(--accent);border-color:rgba(91,156,255,.5);background:rgba(91,156,255,.1)}
+#disclose.l4{color:#ff8a8a;border-color:#e5484d;background:rgba(229,72,77,.16)}
+#disclose.l4 small{color:#ffb4b4}
+@media (max-width:1100px){#disclose small{display:none}}
+#disclose-panel{position:fixed;top:44px;left:12px;z-index:31;width:min(440px,calc(100vw - 24px));max-height:calc(100vh - 68px);overflow:auto;padding:14px;
+  border:1px solid var(--line2);border-radius:10px;background:var(--panel);box-shadow:0 8px 28px #000a}
+#disclose-panel[hidden]{display:none}
+#disclose-panel header{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+#disclose-panel h3{margin:0;font-size:14px}
+#disclose-panel .x{margin-left:auto;width:32px;height:32px;border-radius:6px;color:var(--dim);text-align:center;font-size:18px}
+#disclose-panel .x:hover{background:rgba(255,255,255,.06);color:var(--fg)}
+#disclose-panel .note{color:var(--dim);font-size:11.5px;margin:0 0 8px}
+#disclose-panel .status{color:#8bd5ca;font-size:11.5px;min-height:16px;margin:6px 0 0}
+#disclose-panel .status.bad{color:#f38ba8}
+.dl-row,.dl-head{display:flex;gap:10px;align-items:flex-start;width:100%;min-height:48px;padding:9px 10px;margin:6px 0;border:1px solid var(--line2);
+  border-radius:9px;text-align:left;background:var(--card)}
+.dl-head{border-color:rgba(229,72,77,.5);border-bottom:0;border-radius:9px 9px 0 0;margin-bottom:0}
+.dl-row:hover:not([disabled]){border-color:var(--accent)}
+.dl-row.on{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.dl-row[disabled]{opacity:.5;cursor:not-allowed}
+.dl-row b,.dl-head b{flex:none;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--line2);font-size:12px}
+.dl-row.on b{background:var(--accent);color:#0b0b0d}
+.dl-head b{background:#e5484d;color:#fff}
+.dl-row span,.dl-head span{display:block;font-weight:600}
+.dl-row small,.dl-head small{display:block;color:var(--dim);font-size:11.5px;font-weight:400;margin-top:1px}
+#disclose-slide-box{position:relative;height:52px;margin:0 0 6px;border:1px solid #e5484d;border-radius:0 0 9px 9px;background:rgba(229,72,77,.10);overflow:hidden;touch-action:none}
+#disclose-slide-fill{position:absolute;inset:0 auto 0 0;width:0;background:rgba(229,72,77,.38);pointer-events:none}
+#disclose-slide-text{position:absolute;inset:0;display:grid;place-items:center;font-weight:600;color:#ffc9c9;pointer-events:none;padding-left:48px}
+#disclose-slide{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0 3px;appearance:none;-webkit-appearance:none;background:transparent;cursor:grab}
+#disclose-slide:active{cursor:grabbing}
+#disclose-slide:focus-visible{outline:2px solid var(--fg);outline-offset:-3px}
+#disclose-slide::-webkit-slider-runnable-track{height:46px;background:transparent}
+#disclose-slide::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:46px;height:46px;border-radius:50%;background:#e5484d;border:2px solid rgba(255,255,255,.35);box-shadow:0 2px 8px #0008}
+#disclose-slide::-moz-range-track{height:46px;background:transparent}
+#disclose-slide::-moz-range-thumb{width:42px;height:42px;border-radius:50%;background:#e5484d;border:2px solid rgba(255,255,255,.35)}
+#disclose-lock{height:36px;width:100%;margin-top:4px}
+#disclose-log{margin-top:8px;color:var(--dim);font-size:11.5px}
+#disclose-log pre{margin:6px 0 0;max-height:120px;overflow:auto;font:10.5px/1.5 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
+#disclose-banner{position:fixed;top:72px;left:0;right:0;height:30px;z-index:6;display:flex;align-items:center;gap:9px;padding:0 14px;
+  background:#5c1a1d;color:#ffe3e3;border-bottom:1px solid #e5484d;font-size:12.5px;white-space:nowrap;overflow:hidden}
+#disclose-banner[hidden]{display:none}
+#disclose-banner span{overflow:hidden;text-overflow:ellipsis}
+#disclose-banner .btn{margin-left:auto;flex:none;height:22px;padding:0 10px;font-size:11.5px;border-color:#e5484d;background:rgba(0,0,0,.25);color:#ffe3e3}
+.dl-note{margin-top:10px;padding:8px 10px;border:1px dashed var(--line2);border-radius:7px;color:var(--dim);font-size:11.5px}
+.dl-note .btn{display:block;margin-top:6px;height:26px}
 .tool{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:7px;color:var(--dim);
   white-space:nowrap;user-select:none;border:1px solid transparent;cursor:pointer}
 .tool:hover{background:rgba(255,255,255,.05);color:var(--fg)}
@@ -122,7 +171,7 @@ canvas{display:block;width:100vw;height:100vh}
 .btn{height:28px;padding:0 12px;border-radius:7px;border:1px solid var(--line2);background:var(--card)}
 .btn:hover{border-color:rgba(91,156,255,.6)}
 /* the side panel: the text of the crumb or the event that was picked */
-#side{position:fixed;top:72px;right:0;width:380px;bottom:24px;display:none;flex-direction:column;z-index:4;
+#side{position:fixed;top:var(--top,72px);right:0;width:380px;bottom:24px;display:none;flex-direction:column;z-index:4;
   background:var(--panel);border-left:1px solid var(--line)}
 #side.on{display:flex}
 #side header{display:flex;align-items:center;gap:8px;padding:12px 14px 6px}
@@ -249,7 +298,7 @@ canvas{display:block;width:100vw;height:100vh}
 .tk table.tbl td,.tk table.tbl th{padding:1px 10px 1px 0;text-align:right;font-weight:400;font-variant-numeric:tabular-nums}
 .tk table.tbl th{color:var(--dim)}
 /* measures: a matrix of numbers by scope, context, family and inclusion; it takes the place of the map while it is on */
-#mea{position:fixed;top:72px;left:0;right:var(--mear,0px);bottom:24px;display:none;flex-direction:column;z-index:4;background:var(--bg)}
+#mea{position:fixed;top:var(--top,72px);left:0;right:var(--mear,0px);bottom:24px;display:none;flex-direction:column;z-index:4;background:var(--bg)}
 #mea.on{display:flex}
 body:has(#mea.on) #side{z-index:6}
 #meab{display:flex;align-items:flex-end;flex-wrap:wrap;gap:6px 16px;padding:7px 14px 7px;border-bottom:1px solid var(--line);background:var(--panel);flex:none}
@@ -322,8 +371,24 @@ body:has(#mea.on) #side{z-index:6}
   <div id="settings-harness" class="settings-harness"></div>
   <div id="settings-common"></div>
 </section>
+<section id="disclose-panel" hidden role="dialog" aria-label="What this view shows">
+  <header><h3>What this view shows</h3><button class="x" id="disclose-close" title="Close" aria-label="Close">&times;</button></header>
+  <div class="note">A view is read by a person, and a screen is shared. So this view starts at level 2 each time it opens, and shows more only when it is asked here. The tools of the model are not limited by it.</div>
+  <div id="disclose-levels"></div>
+  <div id="disclose-four">
+    <div class="dl-head"><b>4</b><span>Private<small>The text of private crumbs, word for word. It locks itself again after a while, and each ask is written to disclosure.log.</small></span></div>
+    <div id="disclose-slide-box"><div id="disclose-slide-fill"></div><div id="disclose-slide-text">Slide to show private text</div>
+      <input type="range" id="disclose-slide" min="0" max="100" value="0" step="1" aria-label="Slide to the end to show private text"></div>
+  </div>
+  <div id="disclose-four-no" class="note"></div>
+  <button class="btn" id="disclose-lock" hidden>Lock now</button>
+  <div id="disclose-status" class="status" aria-live="polite"></div>
+  <details id="disclose-log"><summary>The last asks (disclosure.log)</summary><pre></pre></details>
+</section>
+<div id="disclose-banner" hidden role="status"><svg class="i" viewBox="0 0 16 16"><path d="M8 1.5 15 14H1z"/><path d="M8 6v4M8 12v.5"/></svg><span id="disclose-banner-text"></span><button class="btn" id="disclose-banner-lock">Lock now</button></div>
 <div id="bar">
   <div id="brand"><button id="brandmark" title="Breadcrumbs settings" aria-label="Open Breadcrumbs settings"><svg viewBox="0 0 58 58" aria-hidden="true"><g fill="#0b0b0d"><circle cx="12" cy="44" r="5"/><circle cx="26" cy="34" r="5"/><circle cx="38" cy="22" r="5.5"/><circle cx="48" cy="10" r="6"/></g></svg></button><span>breadcrumbs</span><span id="brandlinks"><a id="agency-pages" href="https://breadcrumbs-agency.github.io/" target="_blank" rel="noopener" title="Breadcrumbs Agency GitHub Pages">agency pages</a><a id="agency-repo" href="https://github.com/breadcrumbs-agency/breadcrumbs-codex" target="_blank" rel="noopener" title="Breadcrumbs Codex repository">repo</a></span><span id="harness" hidden><img id="hicon" alt="" width="20" height="20"><span id="hname"></span><span id="hlinks"><a id="hpages" target="_blank" rel="noopener" title="Harness GitHub Pages">pages</a><a id="hrepo" target="_blank" rel="noopener" title="Harness repository">repo</a></span></span></div>
+  <button class="tool" id="disclose" hidden aria-haspopup="dialog"></button>
   <button class="tool" id="home" title="All sessions"><svg class="i" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>Overview</button>
   <label class="tool"><input type="checkbox" id="ctxon"><svg class="i" viewBox="0 0 16 16"><path d="M2 4h7M5 8h9M2 12h5"/></svg>Context</label>
   <label class="tool"><input type="checkbox" id="trkon"><svg class="i" viewBox="0 0 16 16"><path d="M2 13V3M2 13h12M4 10l3-3 2 2 4-5"/></svg>Size</label>
@@ -373,11 +438,16 @@ function rgba(c, a) {
   if (h.length !== 6) return c;
   return `rgba(${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4), 16)},${a})`;
 }
-const api = (p, q = {}) => fetch("api/" + p + "?" + new URLSearchParams({...q, k: KEY}))
-  .then(r => r.ok ? r.json() : Promise.reject(new Error(p + ": HTTP " + r.status)));
+let GRANT = "";  // the grant of this page's disclosure level ("" at the default): every call carries it (see disclosure, below)
+function api(path, q = {}) {
+  const p = {...q, k: KEY};
+  if (GRANT) p.d = GRANT;
+  return fetch("api/" + path + "?" + new URLSearchParams(p)).then(r => r.ok ? r.json() : Promise.reject(new Error(path + ": HTTP " + r.status)));
+}
 const $ = id => document.getElementById(id), cv = $("g"), g = cv.getContext("2d");
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const TOP = 72, LH = 15, FONT = "12px ui-monospace,SFMono-Regular,Menlo,monospace";
+let TOP = 72;  // where the map starts under the toolbar and the trail (30 more while the banner of level 4 shows)
+const LH = 15, FONT = "12px ui-monospace,SFMono-Regular,Menlo,monospace";
 const SANS = "-apple-system,BlinkMacSystemFont,Inter,'Segoe UI',system-ui,sans-serif";
 let BOTTOM = 24, RIGHT = 0;  // the status line and the context box; the side panel (set by resize)
 const OPEN = 170;  // a box this many pixels wide shows its parts
@@ -620,7 +690,7 @@ async function loadSettings() {
 function toggleSettings() {
   const panel = $("settings-panel");
   if (!panel.hidden) { panel.hidden = true; return; }
-  $("evidence").hidden = true; panel.hidden = false; loadSettings();
+  $("evidence").hidden = true; $("disclose-panel").hidden = true; panel.hidden = false; loadSettings();
 }
 $("brandmark").addEventListener("click", toggleSettings);
 $("settings-close").addEventListener("click", () => { $("settings-panel").hidden = true; });
@@ -669,12 +739,129 @@ async function showEvidence() {
   const p = document.createElement("p"); p.textContent = r.text.slice(0, r.text.indexOf(" ")) + " · QR payload above; JSON metadata below";
   const meta = document.createElement("pre"); meta.className = "evidence-json";
   meta.textContent = JSON.stringify(r.json || {}, null, 0);
-  box.append(codes, p, meta); box.hidden = false;
+  box.append(codes, p, meta); $("disclose-panel").hidden = true; box.hidden = false;
 }
 $("harness").addEventListener("click", showEvidence);
 for (const id of ["hpages", "hrepo"]) $(id).addEventListener("click", e => e.stopPropagation());
-document.addEventListener("keydown", e => { if (e.key === "Escape") { $("evidence").hidden = true; $("settings-panel").hidden = true; } });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { $("evidence").hidden = true; $("settings-panel").hidden = true; $("disclose-panel").hidden = true; } });
 api("harness", {h: HASH.get("h") || ARG.get("h") || ""}).then(showHarness).catch(() => {});  // an older server has no route: the brand stands alone
+
+// -- disclosure: what this view shows to the person in front of it (breadcrumbs_spacegraph/disclosure.py). The server holds the
+// level of this page and its ceiling. The page asks, and sends the grant that it got with every call (GRANT, in api()). It
+// is at level 2 (handles and titles, no body text) until it asks. Level 4 (private text) is offered only when the viewer was
+// started with the flag for it, and a hand confirms it: the bar is dragged from its start to its end. Nothing is typed.
+const DL_ICON = {shut: '<rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/>',
+  open: '<rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 4.6-1.3"/>'};
+let DISCLOSE = {level: 2, name: "handles", default: 2, ceiling: 3, until: null, now: 0, levels: [], log: []}, discloseSkew = 0;
+const mmss = n => Math.floor(n / 60) + ":" + String(n % 60).padStart(2, "0");
+function discloseLeft() {  // the seconds until the grant of this page runs out (null: it does not)
+  return DISCLOSE.until ? Math.max(0, Math.round(DISCLOSE.until - (Date.now() / 1000 + discloseSkew))) : null;
+}
+function discloseSay(text, bad) { const box = $("disclose-status"); box.textContent = text || ""; box.className = "status" + (bad ? " bad" : ""); }
+function discloseTake(st) {  // an answer of the server: its state, and the grant when the answer has one
+  const was = DISCLOSE.level;
+  if (typeof st.grant === "string") GRANT = st.grant;
+  DISCLOSE = Object.assign({log: DISCLOSE.log}, st);
+  discloseSkew = st.now ? st.now - Date.now() / 1000 : 0;
+  discloseShow();
+  if (st.level !== was) discloseRefresh();
+}
+function discloseSync() { return api("disclosure").then(discloseTake).catch(() => {}); }  // an older server has no route: the chip stays away
+function discloseAsk(level, how) {  // level null: lock (back to the default)
+  const body = level === null ? {lock: true, d: GRANT} : {level, how: how || "", d: GRANT};
+  return fetch("api/disclosure?" + new URLSearchParams({k: KEY}), {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)})
+    .then(r => r.json().then(x => { if (!r.ok) throw new Error(x.error || ("disclosure: HTTP " + r.status)); return x; }))
+    .then(st => { discloseTake(st); discloseSay(st.level > st.default ? "Level " + st.level + " is on. This ask is in disclosure.log." : ""); discloseSync(); return st; })
+    .catch(e => { discloseSay(e.message, true); return null; });
+}
+function discloseTick() {  // the banner's clock; a grant that ran out is asked again (the server is at the default already)
+  const left = discloseLeft();
+  if (DISCLOSE.level >= 4) $("disclose-banner-text").textContent = "Private text is shown (level 4). Anyone who sees this screen can read it." + (left != null ? " It locks itself in " + mmss(left) + "." : "");
+  if (left === 0) discloseSync();
+}
+function discloseShow() {
+  const d = DISCLOSE, chip = $("disclose"), now = (d.levels.find(l => l.level === d.level) || {}).what || "";
+  chip.hidden = false; chip.className = "tool l" + d.level;
+  chip.innerHTML = `<svg class="i" viewBox="0 0 16 16">${DL_ICON[d.level >= 3 ? "open" : "shut"]}</svg><span>Level ${d.level}</span><small>${d.name}</small>`;
+  chip.title = `This view shows level ${d.level} of 4. ${now} Click to change it (key L).`;
+  chip.setAttribute("aria-label", `Disclosure level ${d.level}, ${d.name}. Change what this view shows`);
+  const ban = $("disclose-banner"), on = d.level >= 4;
+  if (ban.hidden === on) {  // the banner takes a line of its own: the map, the side panel and the Measures start under it
+    ban.hidden = !on; TOP = on ? 102 : 72;
+    document.documentElement.style.setProperty("--top", TOP + "px"); resize();
+  }
+  discloseTick();
+  $("disclose-log").querySelector("pre").textContent = (d.log || []).map(l =>
+    `${l.ts}  ${l.from} \u2192 ${l.level}  ${l.ok === "1" ? "granted" : "refused (" + (l.why || "?") + ")"}  ${l.how !== "-" ? l.how + " " : ""}${l.via || ""} ${l.peer !== "-" ? l.peer : ""}`).join("\n") || "No ask yet.";
+  const sig = JSON.stringify([d.level, d.default, d.ceiling, d.levels]);
+  if (sig === discloseShow.sig) return;  // the same levels as drawn: the buttons stay (a button that is made again under a finger loses its click)
+  discloseShow.sig = sig;
+  const box = $("disclose-levels"); box.replaceChildren();
+  for (const l of d.levels) {
+    if (l.level >= 4) continue;  // level 4 has no button: the bar under them
+    const b = mk("button", "dl-row" + (l.level === d.level ? " on" : "")), t = mk("span");
+    b.disabled = !l.allowed; b.setAttribute("aria-pressed", l.level === d.level ? "true" : "false"); b.dataset.level = l.level;
+    t.append(l.name[0].toUpperCase() + l.name.slice(1) + (l.level === d.default ? " (where a view starts)" : ""),
+      mk("small", null, l.what + (l.allowed ? "" : " This viewer was started with a lower ceiling.")));
+    b.append(mk("b", null, String(l.level)), t);
+    b.onclick = () => { if (l.level !== DISCLOSE.level) discloseAsk(l.level, ""); };
+    box.append(b);
+  }
+  const four = d.levels.find(l => l.level === 4), may = !!(four && four.allowed);
+  $("disclose-four").hidden = !may || d.level >= 4;
+  $("disclose-four-no").hidden = may;
+  $("disclose-four-no").textContent = may ? "" : `Level 4 (private text) is off in this viewer. It takes two keys: start the viewer with ${d.flag || "--disclose 4"} (or ${d.env || "BREADCRUMBS_DISCLOSE"}=4), then slide the bar that shows here.`;
+  $("disclose-lock").hidden = d.level <= d.default;
+  $("disclose-lock").textContent = "Lock now: back to level " + d.default;
+}
+function discloseOpen(on) {
+  const panel = $("disclose-panel");
+  panel.hidden = on === undefined ? !panel.hidden : !on;
+  if (!panel.hidden) { $("evidence").hidden = true; $("settings-panel").hidden = true; discloseSay(""); discloseSync(); }
+}
+function discloseNote(shown) {  // in the side panel: why the text of a crumb is not there, and the way to the levels
+  const d = mk("div", "dl-note"), b = mk("button", "btn", "What this view shows\u2026");
+  d.append(shown < 2 ? "This view shows structure only (level 1): no title and no text."
+    : DISCLOSE.level >= 3 ? "This crumb is private. At level 3 a private crumb shows its handle and the handles of its parts."
+    : "This view shows handles and titles (level 2). The text of the crumb is in the store and is not shown here.");
+  b.onclick = () => discloseOpen(true); d.append(b);
+  return d;
+}
+function discloseRefresh() {  // the level changed: nothing that was drawn at the level before stays on the screen
+  const top = nodes.get(stack[stack.length - 1]), keep = top && top.id && !top.synthetic ? top.id : "";
+  said.clear(); SHOWN.clear(); MEA_NAMES.clear();
+  nodes.clear(); roots.length = 0; cueEdges.length = 0; stack.length = 1; dropped = 0; hover = null; agentIds = []; lastAgent = "";
+  $("tip").style.display = "none"; side(false);
+  GRAPH.state = "idle"; CAL.state = "idle"; CAL.at = 0; CAL.plan = null; dirty = true; temp = Math.max(temp, 0.5);
+  ctxKey = ""; ctxData = null; ctxRows = new Map(); trkKey = "";
+  showTrail(); load(); follow(); context();
+  MEA.ready = false; if (MEA.on) meaLoad();
+  if (keep) setTimeout(() => revealId(keep), 700);
+  msg(`This view now shows level ${DISCLOSE.level} (${DISCLOSE.name}).`);
+}
+$("disclose").addEventListener("click", () => discloseOpen());
+$("disclose-close").addEventListener("click", () => discloseOpen(false));
+for (const id of ["disclose-lock", "disclose-banner-lock"]) $(id).addEventListener("click", () => discloseAsk(null));
+(function discloseSlide() {  // the bar of level 4. A slide starts at the start: a press at the end of the bar is no slide.
+  const bar = $("disclose-slide"), fill = $("disclose-slide-fill");
+  let prev = 0, clean = true, keys = false;
+  const paint = () => { fill.style.width = bar.value + "%"; };
+  const reset = () => { bar.value = 0; prev = 0; clean = true; paint(); };
+  bar.addEventListener("input", () => { const v = +bar.value; if (Math.abs(v - prev) > 25) clean = false; prev = v; paint(); });
+  bar.addEventListener("keydown", () => { keys = true; });
+  bar.addEventListener("pointerdown", () => { keys = false; });
+  bar.addEventListener("change", () => {
+    if (+bar.value >= 98 && clean) { bar.disabled = true; discloseAsk(4, "drag").then(() => { bar.disabled = false; reset(); }); }
+    else if (!keys) reset();  // let go before the end, or a jump: back to the start
+  });
+  bar.addEventListener("blur", reset);
+})();
+setInterval(discloseTick, 1000); setInterval(discloseSync, 30000);
+discloseSync().then(() => {  // a picture for a terminal (`term --disclose N`) asks for its level in the address: 1 or 3, which need no hand
+  const want = Number(HASH.get("dl") || ARG.get("dl") || 0);
+  if ((want === 1 || want === 3) && want !== DISCLOSE.level) discloseAsk(want, "");
+});
+// -- end of disclosure
 
 // -- the graph: a node is a crumb at one place; a part's key is its parent's key + ">" + its slot --
 const nodes = new Map(), roots = [], cueEdges = [];
@@ -1158,7 +1345,10 @@ function pick(n, chars) {
 function text(n, level) {
   if (!n.texts.has(level) && !n.asked.has(level)) {
     n.asked.add(level);
-    api("crumb", {id: n.id, level}).then(r => n.texts.set(level, r.text)).catch(err => msg(err.message));
+    api("crumb", {id: n.id, level}).then(r => {
+      n.texts.set(level, r.text);
+      if (r.shown != null && r.shown < 3) for (const l of LEVELS) { n.texts.set(l, r.text); n.asked.add(l); }  // handles only: the same at every zoom
+    }).catch(err => msg(err.message));
   }
   let best = null;
   for (const l of LEVELS) if (l <= level && n.texts.has(l)) best = n.texts.get(l);
@@ -1218,8 +1408,8 @@ function drawNode(n, t, depth) {  // a box: a session is a square, or a rectangl
     g.save(); g.beginPath(); g.rect(x, y, pw, HEAD); g.clip();
     g.fillStyle = c; g.beginPath(); g.arc(x + 10, y + HEAD / 2, 3, 0, 2 * Math.PI); g.fill();
     g.font = "600 10px " + SANS; g.fillStyle = css("fg");
-    const cues = n.cues && n.cues.length ? n.cues.slice(0, 4).join(" ") : "";
-    g.fillText((n.kind.toUpperCase() + "   " + cues).trim(), x + 18, y + HEAD / 2 + 3.5);
+    const cues = n.cues && n.cues.length ? n.cues.slice(0, 4).join(" ") : (n.title || "");  // no cue words (level 2): the title
+    g.fillText(fitText((n.kind.toUpperCase() + "   " + cues).trim(), pw - 24), x + 18, y + HEAD / 2 + 3.5);
     g.restore();
     g.strokeStyle = rgba(c, 0.25); g.beginPath(); g.moveTo(x + 1, y + HEAD); g.lineTo(x + pw - 1, y + HEAD); g.stroke();
   }
@@ -1455,7 +1645,7 @@ function draw(t) {
     g.beginPath(); g.moveTo(sx(A.x), sy(A.y));
     if (e.tree && layout === "tree") { const m = sy((A.y + B.y) / 2); g.lineTo(sx(A.x), m); g.lineTo(sx(B.x), m); }
     g.lineTo(sx(B.x), sy(B.y)); g.stroke();
-    if (e.shared) words.push({a: [sx(A.x), sy(A.y)], b: [sx(B.x), sy(B.y)], s: e.shared.slice(0, 2).join(" "), on});
+    if (e.shared && e.shared.length) words.push({a: [sx(A.x), sy(A.y)], b: [sx(B.x), sy(B.y)], s: e.shared.slice(0, 2).join(" "), on});
   };
   // The force layout draws all links under the boxes. A fixed layout draws its tree links there, and the other
   // links of the box under the pointer over the boxes: a link across a grid would only cross other boxes.
@@ -1591,7 +1781,8 @@ async function buildDoc(s) {
   const steps = leaves.filter(x => x.kind === "step"), calls = new Map();
   let got = 0;
   await poolRun(steps, 6, async x => {
-    calls.set(x.id, stepCalls((await api("crumb", {id: x.id, level: 1})).text));
+    const r = await api("crumb", {id: x.id, level: 1});  // under level 3 the text of a step is not shown: its meta names its tools, with no arguments
+    calls.set(x.id, r.shown != null && r.shown < 3 ? {say: "", calls: ((x.meta && x.meta.tools) || []).map(nm => ({nm: bareTool(nm), args: {}}))} : stepCalls(r.text));
     if (++got % 40 === 0) msg(`Opening the session: ${got} of ${steps.length} steps read`);
   });
   // turns: a user turn starts one; leaves before the first user turn form a turn without a prompt
@@ -1787,8 +1978,10 @@ function docEdge(e) {  // a tool card to the file that it read (blue) or wrote (
 function docFull(n) {  // a tool result at level 1, for its outcome and its first lines (results up to 25,000 tokens)
   if (n.full === undefined && (n.tokens || 0) <= 25000) {
     n.full = null;
-    api("crumb", {id: n.id, level: 1}).then(r => { n.full = tidy(r.text, true); n.st = toolOutcome(n.full); n.gist = toolGist(n.full); })
-      .catch(() => {});
+    api("crumb", {id: n.id, level: 1}).then(r => {
+      if (r.shown != null && r.shown < 3) { n.full = ""; n.gist = ""; return; }  // handles only: no outcome, no first lines
+      n.full = tidy(r.text, true); n.st = toolOutcome(n.full); n.gist = toolGist(n.full);
+    }).catch(() => {});
   }
 }
 function docCard(n, [x, y, w, h], z, t) {
@@ -2096,9 +2289,10 @@ function frame(t) {
 // -- content in view: the side panel shows the text of what was picked, and the map zooms to it ------
 const el = (tag, cls, s) => { const e = document.createElement(tag); if (cls) e.className = cls; if (s != null) e.textContent = s; return e; };
 const said = new Map();  // "id@level" -> the promise of crumb(id, level).text
+const SHOWN = new Map();  // crumb id -> the disclosure level that its answer showed (crumb().shown): under 3, handles only
 function seen(id, level) {
   const k = id + "@" + level;
-  if (!said.has(k)) said.set(k, api("crumb", {id, level}).then(r => r.text || "").catch(() => ""));
+  if (!said.has(k)) said.set(k, api("crumb", {id, level}).then(r => { if (r.shown != null) SHOWN.set(id, r.shown); return r.text || ""; }).catch(() => ""));
   return said.get(k);
 }
 // A crumb's text as words: its own handle line goes, the handles of its parts keep their kind and title, and
@@ -2127,7 +2321,10 @@ function show(id, level = 1, zoom = true) {  // a crumb: what the model saw (at 
   }
   const p = el("pre", null, "\u2026");
   body.append(el("div", "kick", level < 1 ? "The whole crumb" : "The crumb"), p);
-  seen(id, 1).then(s => { p.textContent = tidy(s, true); });
+  seen(id, 1).then(s => {
+    p.textContent = tidy(s, true);
+    if (SHOWN.has(id) && SHOWN.get(id) < 3 && !body.querySelector(".dl-note")) body.append(discloseNote(SHOWN.get(id)));  // why the text is not there
+  });
   $("smap").style.display = ""; $("smap").onclick = () => { ctxPin = ctxShown; revealId(id); };
   side(true);
   if (zoom) { ctxPin = ctxShown; revealId(id); }
