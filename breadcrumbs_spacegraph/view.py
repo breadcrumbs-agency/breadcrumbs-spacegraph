@@ -15,9 +15,11 @@ import os
 import re
 import secrets
 import sqlite3
+import threading
 import time
 from array import array
 from collections import OrderedDict
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
@@ -34,6 +36,7 @@ from breadcrumbs.usage import AFTER, AFTER_KEYS, CACHE, COST_KEYS, KEYS as CACHE
 from breadcrumbs.usage import LEASE_TTL, leases as usage_leases, lease_totals
 from breadcrumbs.zoom import CUED, GAP, Zoom, parse_ref  # Zoom: tests/test_view.py reads view.Zoom
 
+from . import disclosure
 from .harness import info as harness_info
 
 PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "view.html")
@@ -688,7 +691,7 @@ class _Measures:
 
     def label(self, ref):
         try:
-            return label(self.v.zoom, ref)
+            return self.v._label(ref)
         except (KeyError, ValueError, IndexError, OSError):
             return ref  # a ref that this store cannot show (another host's)
 
@@ -699,6 +702,7 @@ class _Measures:
         has no cue words."""
         if kind == "sess":
             return "sess " + (time.strftime("%m-%d %H:%M", time.localtime(t0)) if t0 else short_sid(sid))
+        title = title if self.v.level >= disclosure.HANDLES else ""  # under level 2: no word of a title
         inner = re.match(r'"(.*?)"', json.dumps(title[:40], ensure_ascii=False)) if title else None
         return kind + " " + (inner.group(1)[:28] if inner else ref)
 
@@ -1317,26 +1321,158 @@ class _Measures:
 
 class View(Reader):
     """Read-only access to one breadcrumbs folder (the provider's root), with the numbers that the viewers draw. The
-    reader of common (reader.py) gives it the store, the verbs crumb, find and trail, and the hide."""
+    reader of common (reader.py) gives it the store, the verbs crumb, find and trail, and the hide.
 
-    def __init__(self, root, clock=time.time, hide=None):
-        """Open a store to read: see Reader. clock: the time of the glow (heat) of a crumb."""
+    A View is for a person, so every answer that holds words passes through its disclosure level (disclosure.py): 2 by
+    default (handles and titles, no body text). The level of a call is, in this order: the level that shown() set for this
+    thread (a server sets it for each request, from the grant of the page), else the level of this view's own grant
+    (self.grant; a program with one user, as the terminal viewer, keeps its grant there), else the default. No argument
+    of a method raises it: a caller that holds a View cannot read past the gate."""
+
+    def __init__(self, root, clock=time.time, hide=None, disclose=None):
+        """Open a store to read: see Reader. clock: the time of the glow (heat) of a crumb. disclose: the ceiling of the
+        disclosure of this view, from the flag that started the viewer (None: BREADCRUMBS_DISCLOSE, else 3)."""
         super().__init__(root, hide)
         self.base = scopes.base_of(root)  # the logs (ace.log, usage.log) are the base's, not a scope's: a scope reads them from here
         self.clock = clock
+        self.gate = disclosure.Gate(self.base, os.path.abspath(root), top=disclose)
+        self.grant = ""  # the grant of a program with one user (see the class text); a server keeps the grants of its pages
+        self._shown = threading.local()  # .level: the level of the request that this thread answers
+        self._public = {}  # crumb id -> is it public with every crumb under it (a crumb never changes)
         self.db_connect = None  # sqlite3.connect for state.db (a test can pass one that watches the reads)
         self._walks, self._events = OrderedDict(), {}  # measures(): crumb trees by session crumb id, receipts by head
         self._nul, self._nul_held = {}, 0  # measures(): block of the store -> where its NUL bytes are, and how many offsets (see _Sizer)
 
-    def _info(self, ref):
+    # -- disclosure: the level of this call, and what a title, a label and a text are at it ------------------------
+    @property
+    def level(self):
+        """The disclosure level of the call that this thread answers (see the class text)."""
+        got = getattr(self._shown, "level", None)
+        return self.gate.level(self.grant) if got is None else got
+
+    @contextmanager
+    def shown(self, level):
+        """Answer at this level in this thread, for the calls inside the block. Never over the ceiling."""
+        before = getattr(self._shown, "level", None)
+        self._shown.level = max(disclosure.STRUCTURE, min(int(level), self.gate.ceiling))
+        try:
+            yield self
+        finally:
+            self._shown.level = before
+
+    def _label(self, ref):
+        """label() at the level of this call. Its cue words are words of the body: where they may not show, the label is
+        the kind and the title, cut short (2), or the kind alone (1)."""
+        d = self.level
+        if d >= disclosure.PRIVATE or (d >= disclosure.PUBLIC and self._is_public(ref)):
+            return label(self.zoom, ref)
+        c = self._crumb(ref)
+        if c is None:
+            return "text " + ref.partition(":")[2] if ":" in ref else "text"
+        return disclosure.label(c.kind, c.title, d, ref)
+
+    def _is_public(self, ref):
+        """True when all the text under ref may show at level 3: a public crumb whose parts are all public. A text (a
+        range of lines) is as public as the first crumb that holds it."""
+        blob_id = ref.partition(":")[0]
+        got = self._public.get(blob_id)
+        if got is None:
+            try:
+                c = self._crumb(blob_id)
+                if c is None:
+                    holder = self.index.holder(blob_id)
+                    held = self._crumb(holder) if holder else None
+                    got = bool(held is not None and held.public)
+                else:
+                    self._public[blob_id] = False  # while its parts are asked
+                    summary = self.index.summary_of(blob_id) if c.kind != "sum" else None
+                    got = bool(c.public) and all(self._is_public(k) for k in c.kids) and (not summary or self._is_public(summary))
+            except (KeyError, ValueError, OSError):
+                got = False
+            self._public[blob_id] = got
+        return got
+
+    def _outline(self, ref, level):
+        """A crumb as its handle and the handles of its parts, one step: what level 2 shows of it (and level 1, with no
+        title and no cue word). No line of a text is in it (disclosure.outline drops any)."""
+        kind, blob_id, _, _, obj = self.zoom._node(ref)
+        lines = [self.zoom.handle(ref)]
+        if kind == "crumb" and ":" not in ref:
+            lines += [self.zoom.handle(p, 1) for p in self.zoom.parts(obj, blob_id)]
+        return disclosure.outline("".join(lines), level)
+
+    def _public_text(self, ref, zoom_level):
+        """A crumb at level 3 when not all under it is public, one step: a public crumb shows its own text, a part that is
+        public with all under it shows as it would alone, and any other part keeps its handle."""
+        kind, blob_id, _, _, obj = self.zoom._node(ref)
+        if kind != "crumb" or ":" in ref:
+            return self._outline(ref, disclosure.HANDLES)  # a text that no public crumb holds
+        own = bool(obj.public)
+        out = [disclosure.outline(self.zoom.handle(ref), disclosure.HANDLES)]
+        for p in self.zoom.parts(obj, blob_id):
+            if (own and ":" in p) or (":" not in p and self._is_public(p)):
+                text = self.zoom.render(p, zoom_level if ":" not in p else 1.0)
+                out.append("".join("  " + line + "\n" for line in text.splitlines()))
+            else:
+                out.append(disclosure.outline(self.zoom.handle(p, 1), disclosure.HANDLES))
+        return "".join(out)
+
+    def crumb(self, ref, level):
+        """crumb(id, level) of the reader, at the disclosure level of this call. `level` is the zoom of the text (0 to 1)
+        and never raises the disclosure. The answer says what it shows: shown 4 the text as stored; 3 the text of a public
+        crumb; 2 handles and titles only; 1 handles with no word. A view can then say why a text is not there."""
+        d = self.level
+        if d >= disclosure.PRIVATE:
+            return dict(super().crumb(ref, level), shown=disclosure.PRIVATE)
+        with self.lock:
+            if self._hidden_ref(ref):
+                raise KeyError(ref)
+            if d >= disclosure.PUBLIC and self._is_public(ref):
+                text, shown = self.zoom.render(ref, level), disclosure.PUBLIC
+            elif d >= disclosure.PUBLIC:
+                text, shown = self._public_text(ref, level), disclosure.HANDLES
+            else:
+                text, shown = self._outline(ref, d), d
+            return {"id": ref, "level": level, "tokens": self.zoom.full(ref), "text": text, "shown": shown}
+
+    def find(self, q, k=8):
+        """find of the reader. Under level 2 a view holds no word, so it takes none either: no search."""
+        return super().find(q, k) if self.level >= disclosure.HANDLES else []
+
+    def trail(self):
+        """trail of the reader. The harness names each entry with cue words (label()); under level 4 each entry is named
+        again here, at the level of this call (_label)."""
+        d, got = self.level, super().trail()
+        if d >= disclosure.PRIVATE or not isinstance(got, dict):
+            return got
+        stack = []
+        with self.lock:
+            for e in got.get("stack", []):
+                if not isinstance(e, dict):
+                    continue
+                try:
+                    stack.append(dict(e, label=self._label(str(e.get("id", "")))))
+                except (KeyError, ValueError, IndexError, OSError):
+                    stack.append(dict(e, label=str(e.get("id", ""))))  # a crumb that this store cannot show
+        return Trail(stack, got.get("dropped", 0), got.get("session", "")).to_dict()
+
+    def disclosure(self, grant=""):
+        """The gate as a view shows it (disclosure.Gate.state), and the last lines of its log."""
+        return dict(self.gate.state(grant), log=disclosure.read_log(self.base, 8), store=os.path.abspath(self.root))
+
+    def _info(self, ref, cues=False):
+        """One node of the map. cues: with its cue words whatever the level (graph() joins the sessions by them, then
+        takes them out again where they may not show)."""
         blob_id = ref.partition(":")[0]
         blob = self.store.get(blob_id)
         info = {"id": ref, "kind": "text", "title": "", "cues": [], "session": "", "ts": 0,
                 "tokens": self.zoom.full(ref)}
         if is_crumb(blob) and ":" not in ref:
-            c = Crumb.decode(blob)
-            info.update(kind=c.kind, title=c.title, session=c.meta.get("sess", ""), ts=c.meta.get("ts", 0),
-                        cues=self.zoom.cue_words(blob_id).split() if c.kind in CUED else [])
+            c, d = Crumb.decode(blob), self.level
+            info.update(kind=c.kind, title=disclosure.title(c.title, d, c.public), session=c.meta.get("sess", ""), ts=c.meta.get("ts", 0),
+                        cues=self.zoom.cue_words(blob_id).split() if c.kind in CUED and (cues or disclosure.body(d, self._is_public(ref))) else [])
+            if c.public:
+                info["public"] = True
         return info
 
     def _weigh(self, nodes):
@@ -1357,8 +1493,19 @@ class View(Reader):
                 moved = {n: os.stat(os.path.join(self.refs.path, n)).st_mtime_ns for n in names}
                 names.sort(key=lambda n: (moved[n], n), reverse=True)
                 refs = [self.refs.get(n) for n in names[:limit]]
-                nodes = [n for n in (self._info(r) for r in refs if r) if not self._hidden(n["session"])]
-                edges = cue_edges(nodes)
+                nodes = [n for n in (self._info(r, cues=True) for r in refs if r) if not self._hidden(n["session"])]
+                edges, d = cue_edges(nodes), self.level
+                # That two sessions share words is a number (the weight of the edge): it shows from level 2. Which words
+                # they are is body text: the cue words of a node and the shared words of an edge show where the text shows.
+                may = {n["id"]: disclosure.body(d, self._is_public(n["id"])) for n in nodes}
+                for n in nodes:
+                    if not may[n["id"]]:
+                        n["cues"] = []
+                for e in edges:
+                    if not (may[e["source"]] and may[e["target"]]):
+                        e["shared"] = []
+                if d < disclosure.HANDLES:
+                    edges = []
             else:
                 if self._hidden_ref(root):
                     raise KeyError(root)
@@ -1409,7 +1556,7 @@ class View(Reader):
     def _row(self, ref):
         c = self._crumb(ref)
         sid = self._sid(ref, c)
-        return {"id": ref, "kind": c.kind if c else "text", "label": ref if self._hidden(sid) else label(self.zoom, ref),
+        return {"id": ref, "kind": c.kind if c else "text", "label": ref if self._hidden(sid) else self._label(ref),
                 "session": sid, "bars": []}
 
     def session(self, sid):
@@ -1430,14 +1577,16 @@ class View(Reader):
                     stack.extend(reversed(self._crumb(cid).kids))
             sums = {cid: self.index.summary_of(cid) for cid in ids}
             ids += [x for x in dict.fromkeys(sums.values()) if x and x not in seen]
-            heat = self.index.heat(ids)
+            heat, d = self.index.heat(ids), self.level
             nodes, edges, known = [], [], set(ids)
             for cid in ids:
                 c = self._crumb(cid)
-                node = {"id": cid, "kind": c.kind, "title": c.title, "tokens": self.zoom.full(cid), "meta": c.meta,
-                        "ranges": c.ranges}
+                node = {"id": cid, "kind": c.kind, "title": disclosure.title(c.title, d, c.public), "tokens": self.zoom.full(cid),
+                        "meta": disclosure.meta(c.meta, d, c.public), "ranges": c.ranges}
+                if c.public:
+                    node["public"] = True
                 if c.kind in CUED:
-                    node["cues"] = self.zoom.cue_words(cid).split()
+                    node["cues"] = self.zoom.cue_words(cid).split() if disclosure.body(d, self._is_public(cid)) else []
                 if sums.get(cid):
                     node["summary"] = sums[cid]
                 if cid in heat:
@@ -1492,7 +1641,7 @@ class View(Reader):
             sess = self.refs.get(_ref_name("sess-", sid))
             if not chain and not sess:
                 raise KeyError(sid)
-            band = self._band()
+            band, d = self._band(), self.level
             events, spent = [], {}
             for rid, c in chain:
                 m = c.meta
@@ -1500,7 +1649,8 @@ class View(Reader):
                     spent[m["turn"]] = spent.get(m["turn"], 0) + m["bytes"]
                 events.append({"id": rid, "ev": m["ev"], "turn": m["turn"], "ts": m["ts"], "bytes": m["bytes"],
                                "budget": m.get("budget", 0), "ovf": m.get("ovf", False), "rate": m.get("rate", 0.0),
-                               "band": m.get("band") or band, "q": m.get("q", ""), "cap": bool(m.get("cap", False)),
+                               "band": m.get("band") or band, "q": m.get("q", "") if disclosure.body(d, c.public) else "",
+                               "cap": bool(m.get("cap", False)),
                                "used": m.get("used", spent.get(m["turn"], 0)), "turn_budget": m.get("tb") or None,
                                "want": m.get("want", m["bytes"])})
             stops = [i for i, e in enumerate(events) if e["ev"] == "compress"]
@@ -1665,7 +1815,7 @@ class View(Reader):
         shown = lambda p: "~" + p[len(me):] if p == me or p.startswith(me + os.sep) else p
         out = {"store": shown(root), "kind": "scope" if scope.get("id") else "profile", "scope": str(scope.get("id") or ""),
                "pwd": shown(str(scope.get("root") or "")), "profile": profile, "viewer_pid": os.getpid(),
-               "sess": "", "writer": None, "ace": None, "usage": None}
+               "disclose": self.level, "sess": "", "writer": None, "ace": None, "usage": None}
         got = self.ace(sid or None)
         sess = got["session"]
         if sess:
@@ -1782,7 +1932,7 @@ class View(Reader):
         for ref in list(refs)[:LABELS_MAX]:
             with self.lock:
                 try:
-                    out[ref] = ref if self._hidden_ref(ref) else label(self.zoom, ref)
+                    out[ref] = ref if self._hidden_ref(ref) else self._label(ref)
                 except (KeyError, ValueError, IndexError, OSError):
                     out[ref] = ref
         return out
@@ -1943,7 +2093,7 @@ class View(Reader):
                 if t1 is None or t1 < t0:
                     t1 = t0
                 parent = rec.get("parent_session_id") or None
-                out.append({"id": ref, "sid": sid, "title": c.title, "t0": None if t0 is None else float(t0),
+                out.append({"id": ref, "sid": sid, "title": disclosure.title(c.title, self.level, c.public), "t0": None if t0 is None else float(t0),
                             "t1": None if t1 is None else float(t1), "parent": parent if parent != sid else None,
                             "how": rec.get("created_source") or None})
         out.sort(key=lambda s: (-(s["t0"] or 0), s["sid"]))
@@ -1986,16 +2136,22 @@ EXPLORER_API = {
     "/api/harness": lambda v, q: harness_info(q.get("h") or None),  # the program of this view and the icons: the mark beside the brand
     "/api/settings": lambda v, q: v.settings("get", q),
     "/api/changes": lambda v, q: v.changes(),  # the live page: which of its data changed (store, logs, this chat's config)
+    "/api/disclosure": lambda v, q: v.disclosure(q.get("d", "")),  # the level of this page, the ceiling of this server, the log
 }
 
 
-def make_server(root, port=8765, host="127.0.0.1"):
+def make_server(root, port=8765, host="127.0.0.1", disclose=None):
     """An authenticated HTTP server for the page and its API (one View shared by every request).
 
     Reads are the normal path; the settings route also accepts authenticated CRUD mutations for the common dials and
     the selected harness's own settings. The View hides the sessions and profile that opted out of visualization.
+
+    disclose: the ceiling of what this server shows (the flag --disclose of the command that starts it; None:
+    BREADCRUMBS_DISCLOSE, else 3). Every request is answered at the level of its page: the grant that it sends as `d`,
+    else the default (2: handles and titles, no body text). A page asks for a level with POST /api/disclosure
+    {level, how}; level 4 is granted only under a ceiling of 4 and with how "drag" (the bar of the page).
     """
-    view, key, routes = View(root, hide=hide_of(root)), token(root), {**API, **EXPLORER_API}
+    view, key, routes = View(root, hide=hide_of(root), disclose=disclose), token(root), {**API, **EXPLORER_API}
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -2018,20 +2174,44 @@ def make_server(root, port=8765, host="127.0.0.1"):
             if not hmac.compare_digest(q.get("k", ""), key):
                 return self._send(403, "application/json", b'{"error": "token"}')
             try:
-                body = json.dumps(routes[url.path](view, q), ensure_ascii=False).encode("utf-8")
+                with view.shown(view.gate.level(q.get("d", ""))):  # the level of the page that asks: its grant, else the default
+                    body = json.dumps(routes[url.path](view, q), ensure_ascii=False).encode("utf-8")
             except KeyError as e:
                 return self._send(404, "application/json", json.dumps({"error": "unknown id: %s" % e}).encode())
             except (ValueError, TypeError) as e:
                 return self._send(400, "application/json", json.dumps({"error": str(e)}).encode())
             self._send(200, "application/json; charset=utf-8", body)
 
+        def _disclose(self, q):
+            """POST /api/disclosure {level, how}: a page asks for a level (or {lock: true}: back to the default). The
+            ceiling is not in the body and no request changes it. 403 with the reason when the gate refuses."""
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length > 10_000:
+                    raise ValueError("body is too large")
+                body = json.loads(self.rfile.read(length) or b"{}")
+                if not isinstance(body, dict):
+                    raise ValueError("body must be an object")
+                grant, peer = str(body.get("d") or q.get("d") or ""), "%s:%s" % self.client_address[:2]
+                if body.get("lock"):
+                    result = view.gate.lock(grant, peer=peer)
+                else:
+                    result = view.gate.ask(body.get("level"), str(body.get("how") or ""), grant, peer=peer)
+                return self._send(200, "application/json; charset=utf-8", json.dumps(result).encode("utf-8"))
+            except disclosure.Refused as e:
+                return self._send(403, "application/json", json.dumps(dict(view.gate.state(q.get("d", "")), error=str(e))).encode())
+            except (KeyError, ValueError, TypeError) as e:
+                return self._send(400, "application/json", json.dumps({"error": str(e)}).encode())
+
         def _mutate_settings(self, method):
             url = urlsplit(self.path)
             q = {k: v[0] for k, v in parse_qs(url.query).items()}
-            if url.path != "/api/settings":
+            if url.path not in ("/api/settings", "/api/disclosure"):
                 return self._send(404, "application/json", b'{"error": "not found"}')
             if not hmac.compare_digest(q.get("k", ""), key):
                 return self._send(403, "application/json", b'{"error": "token"}')
+            if url.path == "/api/disclosure":
+                return self._disclose(q) if method == "POST" else self._send(404, "application/json", b'{"error": "not found"}')
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 if length > 1_000_000:
