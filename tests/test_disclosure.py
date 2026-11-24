@@ -436,6 +436,29 @@ class Server(Store3):
             with e:
                 return e.code, json.loads(e.read() or b"{}")
 
+    def origin(self, origin, key=None):
+        """The Access-Control-Allow-Origin of the answer to GET /api/disclosure that a page of `origin` sends."""
+        url = "http://127.0.0.1:%d/api/disclosure?k=%s" % (self.port, self.key if key is None else key)
+        headers = {} if origin is None else {"Origin": origin}
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=10) as r:
+                return r.status, r.headers.get("Access-Control-Allow-Origin"), r.headers.get("Vary")
+        except urllib.error.HTTPError as e:
+            with e:
+                return e.code, e.headers.get("Access-Control-Allow-Origin"), e.headers.get("Vary")
+
+    def test_only_a_sandboxed_frame_or_this_server_may_read_the_api_from_a_browser(self):
+        self.serve()
+        own = "http://127.0.0.1:%d" % self.port
+        self.assertEqual(self.origin("null"), (200, "null", "Origin"))
+        self.assertEqual(self.origin(own), (200, own, "Origin"))
+        self.assertEqual(self.origin("http://localhost:%d" % self.port)[1], "http://localhost:%d" % self.port)
+        for other in ("https://example.com", "http://127.0.0.1:1", "http://localhost", "http://127.0.0.1:%d.evil.test" % self.port):
+            self.assertEqual(self.origin(other), (200, None, "Origin"), other)
+        self.assertEqual(self.origin(None), (200, None, "Origin"))  # not a browser: nothing to allow
+        self.assertEqual(self.origin("https://example.com", key="wrong"), (403, None, "Origin"))  # a refusal grants nothing either
+        self.assertEqual(self.origin("null", key="wrong")[:2], (403, "null"))  # a sandboxed frame reads the refusal
+
     def test_a_page_reads_level_2_until_it_holds_a_grant(self):
         self.serve()
         code, got = self.call("crumb", id=self.ids["t1"], level="1")
