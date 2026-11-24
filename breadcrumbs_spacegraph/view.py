@@ -2235,12 +2235,26 @@ def make_server(root, port=8765, host="127.0.0.1", disclose=None):
         def do_DELETE(self):
             return self._mutate_settings("DELETE")
 
+        def _origin_ok(self):
+            """True for the pages that may read the API from a browser: a request with no Origin (not a browser), a
+            sandboxed frame (its origin is the text "null": the page may sit in one), or a page of this server. Any
+            other web origin gets no Access-Control-Allow-Origin, so its script cannot read an answer, even with the
+            token. The token stays the gate for every request."""
+            origin = self.headers.get("Origin")
+            if not origin:
+                return False
+            host, port = self.server.server_address[:2]
+            own = {"http://%s:%d" % (h, port) for h in (host, "127.0.0.1", "localhost", "[::1]")}
+            return origin == "null" or origin in own
+
         def _send(self, code, kind, body):
             self.send_response(code)
             self.send_header("Content-Type", kind)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
-            self.send_header("Access-Control-Allow-Origin", "*")  # the page may sit in a sandboxed frame
+            if self._origin_ok():
+                self.send_header("Access-Control-Allow-Origin", self.headers["Origin"])
+            self.send_header("Vary", "Origin")
             self.end_headers()
             self.wfile.write(body)
 
