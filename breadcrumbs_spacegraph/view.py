@@ -27,7 +27,7 @@ from breadcrumbs import catalog, dials, metrics, ports, scope as scopes, statedb
 from breadcrumbs.crumbs import Crumb, is_crumb
 from breadcrumbs.history import _ref_name
 from breadcrumbs.index import cue_edges
-from breadcrumbs.ingest import leaves
+from breadcrumbs.ingest import leaves, title_of
 from breadcrumbs.lines import decode_spine
 from breadcrumbs.metrics import metric
 from breadcrumbs.reader import Reader, Trail  # Trail: tests/test_view.py and hermes.py read view.Trail
@@ -594,7 +594,7 @@ class _Walk:
             self.refs.append(cid)
             self.parent.append(up)
             self.kind.append(c.kind if c else "text")
-            self.title.append(c.title if c else "")
+            self.title.append(title_of(view.store, c) if c else "")
             self.kids.append([])
             self.selfb.append(size(cid) - sum(size(k) for k in kids))
             self.ts.append(None)
@@ -1152,7 +1152,7 @@ class _Measures:
         c = self.crumb(s["ref"]) if s["ref"] else None
         more = bool(c is not None and (c.kids or v.index.summary_of(s["ref"]) or self.events_of(sid)))
         rec = s["rec"] or {}
-        name, named = self.row_label(s["ref"], "sess", c.title if c else "", s["t0"], sid) if s["ref"] else (short_sid(sid), True)
+        name, named = self.row_label(s["ref"], "sess", title_of(v.store, c) if c else "", s["t0"], sid) if s["ref"] else (short_sid(sid), True)
         return {"key": _skey(sid), "parent": _skey(s["parent"]) if s["parent"] in self.kids and sid not in self.top else None,
                 "kind": "sess", "label": name, "named": named, "short": short_sid(sid),
                 "depth": self.depth.get(sid, 0), "has_kids": bool(self.kids.get(sid)) or more, "more": more,
@@ -1197,7 +1197,7 @@ class _Measures:
             for n, (ref, cs) in enumerate(self.foreign_cells(sid, walk).items()):
                 c = self.v.crumb_or_none(ref) if "@" not in ref else None
                 if c is not None and not self.v._hidden(c.meta.get("sess", "")):  # no-vis: no label
-                    name, named = self.row_label(ref, c.kind, c.title)
+                    name, named = self.row_label(ref, c.kind, title_of(self.v.store, c))
                 else:
                     name, named = ref, True
                 item = {"key": "%s>%d.%s" % (key, n, ref), "parent": key, "kind": c.kind if c else "text",
@@ -1369,7 +1369,7 @@ class View(Reader):
         c = self._crumb(ref)
         if c is None:
             return "text " + ref.partition(":")[2] if ":" in ref else "text"
-        return disclosure.label(c.kind, c.title, d, ref)
+        return disclosure.label(c.kind, title_of(self.store, c), d, ref)
 
     def _is_public(self, ref):
         """True when all the text under ref may show at level 3: a public crumb whose parts are all public. A text (a
@@ -1469,7 +1469,7 @@ class View(Reader):
                 "tokens": self.zoom.full(ref)}
         if is_crumb(blob) and ":" not in ref:
             c, d = Crumb.decode(blob), self.level
-            info.update(kind=c.kind, title=disclosure.title(c.title, d, c.public), session=c.meta.get("sess", ""), ts=c.meta.get("ts", 0),
+            info.update(kind=c.kind, title=disclosure.title(title_of(self.store, c), d, c.public), session=c.meta.get("sess", ""), ts=c.meta.get("ts", 0),
                         cues=self.zoom.cue_words(blob_id).split() if c.kind in CUED and (cues or disclosure.body(d, self._is_public(ref))) else [])
             if c.public:
                 info["public"] = True
@@ -1581,7 +1581,7 @@ class View(Reader):
             nodes, edges, known = [], [], set(ids)
             for cid in ids:
                 c = self._crumb(cid)
-                node = {"id": cid, "kind": c.kind, "title": disclosure.title(c.title, d, c.public), "tokens": self.zoom.full(cid),
+                node = {"id": cid, "kind": c.kind, "title": disclosure.title(title_of(self.store, c), d, c.public), "tokens": self.zoom.full(cid),
                         "meta": disclosure.meta(c.meta, d, c.public), "ranges": c.ranges}
                 if c.public:
                     node["public"] = True
@@ -2093,7 +2093,7 @@ class View(Reader):
                 if t1 is None or t1 < t0:
                     t1 = t0
                 parent = rec.get("parent_session_id") or None
-                out.append({"id": ref, "sid": sid, "title": disclosure.title(c.title, self.level, c.public), "t0": None if t0 is None else float(t0),
+                out.append({"id": ref, "sid": sid, "title": disclosure.title(title_of(self.store, c), self.level, c.public), "t0": None if t0 is None else float(t0),
                             "t1": None if t1 is None else float(t1), "parent": parent if parent != sid else None,
                             "how": rec.get("created_source") or None})
         out.sort(key=lambda s: (-(s["t0"] or 0), s["sid"]))
